@@ -38,6 +38,19 @@ export interface Community {
   enabled: boolean
 }
 
+export interface RuleTestResult {
+  resolved_name: string
+  unmapped: boolean
+  severity_id: number | null
+  severity_name: string
+  matched: boolean
+  matched_rule_id: number | null
+  matched_rule_name: string
+  bypass_flood_control: boolean
+  channel_ids: number[]
+  channel_names: string[] | null
+}
+
 export interface V3User {
   id: number
   username: string

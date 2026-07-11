@@ -1,12 +1,15 @@
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw, MapPin } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import type { TrapView } from '@/lib/types'
-import { useTrapNotifications, useInvalidate } from '@/lib/queries'
+import { useTrapNotifications, useSeverities, useInvalidate } from '@/lib/queries'
 import { useToast } from '@/lib/toast'
 import { useState } from 'react'
 import { Dialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
+import { Field } from '@/components/ui/label'
 import { SeverityBadge } from '@/components/Severity'
 import { Mono, LoadingRow } from '@/components/common'
 import { formatTimestamp, prettyJSON } from '@/lib/utils'
@@ -22,6 +25,7 @@ export function TrapDetail({ trap, onClose }: { trap: TrapView | null; onClose: 
   const invalidate = useInvalidate()
   const toast = useToast()
   const [replaying, setReplaying] = useState(false)
+  const [mapping, setMapping] = useState(false)
 
   const replay = async () => {
     if (!trap) return
@@ -39,6 +43,7 @@ export function TrapDetail({ trap, onClose }: { trap: TrapView | null; onClose: 
   }
 
   return (
+    <>
     <Dialog
       open={trap != null}
       onClose={onClose}
@@ -50,6 +55,11 @@ export function TrapDetail({ trap, onClose }: { trap: TrapView | null; onClose: 
           <Button variant="ghost" onClick={onClose}>
             Close
           </Button>
+          {trap?.unmapped && (
+            <Button variant="ghost" onClick={() => setMapping(true)}>
+              <MapPin className="h-4 w-4" /> Map this OID
+            </Button>
+          )}
           <Button variant="primary" onClick={replay} loading={replaying}>
             <RefreshCw className="h-4 w-4" /> Replay routing
           </Button>
@@ -125,6 +135,79 @@ export function TrapDetail({ trap, onClose }: { trap: TrapView | null; onClose: 
           </section>
         </div>
       )}
+    </Dialog>
+    {mapping && trap && (
+      <QuickMapDialog
+        oid={trap.trap_oid}
+        onClose={() => setMapping(false)}
+        onMapped={() => { invalidate('oidmap'); setMapping(false) }}
+      />
+    )}
+    </>
+  )
+}
+
+function QuickMapDialog({ oid, onClose, onMapped }: { oid: string; onClose: () => void; onMapped: () => void }) {
+  const { data: severities = [] } = useSeverities()
+  const toast = useToast()
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [severityId, setSeverityId] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const save = async () => {
+    setBusy(true)
+    try {
+      await api.post('/oidmap', {
+        oid,
+        name: name.trim(),
+        description: description.trim(),
+        default_severity_id: severityId ? Number(severityId) : null,
+        is_builtin: false,
+      })
+      toast.push('success', 'OID mapped. New traps for it will resolve by name.')
+      onMapped()
+    } catch (err) {
+      toast.push('error', err instanceof ApiError ? err.message : 'Could not map the OID.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title="Map OID"
+      description="Give this OID a name and default severity so future traps classify automatically."
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" onClick={save} loading={busy} disabled={!name.trim()}>
+            Map OID
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="OID">
+          <Input value={oid} readOnly className="font-mono opacity-70" />
+        </Field>
+        <Field label="Name">
+          <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder="sfosLiveUserLogin" />
+        </Field>
+        <Field label="Description" hint="optional">
+          <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this event means" />
+        </Field>
+        <Field label="Default severity" hint="applied when no rule overrides it">
+          <Select value={severityId} onChange={(e) => setSeverityId(e.target.value)}>
+            <option value="">Unclassified</option>
+            {severities.slice().sort((a, b) => a.rank - b.rank).map((s) => (
+              <option key={s.id} value={s.id}>{s.emoji ? `${s.emoji} ` : ''}{s.name}</option>
+            ))}
+          </Select>
+        </Field>
+      </div>
     </Dialog>
   )
 }

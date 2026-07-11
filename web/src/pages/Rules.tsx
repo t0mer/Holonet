@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, GitBranch, Zap } from 'lucide-react'
+import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, GitBranch, Zap, GripVertical, FlaskConical, ArrowRight } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
-import type { Channel, Device, Rule, Severity } from '@/lib/types'
+import type { Channel, Device, Rule, RuleTestResult, Severity } from '@/lib/types'
 import { useRules, useChannels, useDevices, useSeverities, useInvalidate } from '@/lib/queries'
 import { useToast } from '@/lib/toast'
 import { PageHeader, LoadingRow, ErrorNote, EmptyState, Mono } from '@/components/common'
@@ -28,21 +28,37 @@ export function RulesPage() {
   const [editing, setEditing] = useState<Rule | null>(null)
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState<Rule | null>(null)
+  const [testing, setTesting] = useState(false)
+  const [dragId, setDragId] = useState<number | null>(null)
 
   const ordered = useMemo(() => rules.slice().sort((a, b) => a.ord - b.ord), [rules])
   const sevById = useMemo(() => new Map(severities.map((s) => [s.id, s])), [severities])
 
-  const move = async (index: number, dir: -1 | 1) => {
-    const next = index + dir
-    if (next < 0 || next >= ordered.length) return
-    const ids = ordered.map((r) => r.id)
-    ;[ids[index], ids[next]] = [ids[next], ids[index]]
+  const reorder = async (ids: number[]) => {
     try {
       await api.put('/rules/reorder', { ordered_ids: ids })
       invalidate('rules')
     } catch (err) {
       toast.push('error', err instanceof ApiError ? err.message : 'Could not reorder rules.')
     }
+  }
+
+  const move = (index: number, dir: -1 | 1) => {
+    const next = index + dir
+    if (next < 0 || next >= ordered.length) return
+    const ids = ordered.map((r) => r.id)
+    ;[ids[index], ids[next]] = [ids[next], ids[index]]
+    reorder(ids)
+  }
+
+  const dropOn = (targetId: number) => {
+    if (dragId == null || dragId === targetId) return setDragId(null)
+    const ids = ordered.map((r) => r.id)
+    const from = ids.indexOf(dragId)
+    const to = ids.indexOf(targetId)
+    ids.splice(to, 0, ids.splice(from, 1)[0])
+    setDragId(null)
+    reorder(ids)
   }
 
   const toggle = async (rule: Rule, enabled: boolean) => {
@@ -58,11 +74,16 @@ export function RulesPage() {
     <div>
       <PageHeader
         title="Rules"
-        description="Evaluated top to bottom — the first match assigns severity and routes the trap."
+        description="Evaluated top to bottom — the first match assigns severity and routes the trap. Drag to reorder."
         action={
-          <Button variant="primary" onClick={() => setCreating(true)}>
-            <Plus className="h-4 w-4" /> Add rule
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={() => setTesting(true)}>
+              <FlaskConical className="h-4 w-4" /> Test
+            </Button>
+            <Button variant="primary" onClick={() => setCreating(true)}>
+              <Plus className="h-4 w-4" /> Add rule
+            </Button>
+          </div>
         }
       />
 
@@ -93,9 +114,12 @@ export function RulesPage() {
               rule={rule}
               index={i}
               count={ordered.length}
+              dragging={dragId === rule.id}
               severity={rule.severity_id != null ? sevById.get(rule.severity_id) : undefined}
               channelCount={rule.channel_ids?.length ?? 0}
               onMove={move}
+              onDragStart={() => setDragId(rule.id)}
+              onDropOn={() => dropOn(rule.id)}
               onToggle={(enabled) => toggle(rule, enabled)}
               onEdit={() => setEditing(rule)}
               onDelete={() => setDeleting(rule)}
@@ -115,6 +139,7 @@ export function RulesPage() {
         />
       )}
       <DeleteRule rule={deleting} onClose={() => setDeleting(null)} />
+      {testing && <TestRuleDialog onClose={() => setTesting(false)} />}
     </div>
   )
 }
@@ -123,9 +148,12 @@ function RuleRow({
   rule,
   index,
   count,
+  dragging,
   severity,
   channelCount,
   onMove,
+  onDragStart,
+  onDropOn,
   onToggle,
   onEdit,
   onDelete,
@@ -133,15 +161,32 @@ function RuleRow({
   rule: Rule
   index: number
   count: number
+  dragging: boolean
   severity: Severity | undefined
   channelCount: number
   onMove: (index: number, dir: -1 | 1) => void
+  onDragStart: () => void
+  onDropOn: () => void
   onToggle: (enabled: boolean) => void
   onEdit: () => void
   onDelete: () => void
 }) {
+  const [over, setOver] = useState(false)
   return (
-    <Card className={cn('flex items-center gap-3 p-3', !rule.enabled && 'opacity-60')}>
+    <Card
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={(e) => { e.preventDefault(); setOver(true) }}
+      onDragLeave={() => setOver(false)}
+      onDrop={() => { setOver(false); onDropOn() }}
+      className={cn(
+        'flex items-center gap-3 p-3',
+        !rule.enabled && 'opacity-60',
+        dragging && 'opacity-40',
+        over && 'ring-1 ring-holo',
+      )}
+    >
+      <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-muted active:cursor-grabbing" aria-hidden />
       <div className="flex flex-col">
         <button
           onClick={() => onMove(index, -1)}
@@ -369,6 +414,94 @@ function ToggleRow({
       </div>
       <Switch checked={checked} onChange={onChange} aria-label={label} />
     </div>
+  )
+}
+
+function TestRuleDialog({ onClose }: { onClose: () => void }) {
+  const toast = useToast()
+  const [sourceIp, setSourceIp] = useState('')
+  const [trapOid, setTrapOid] = useState('')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<RuleTestResult | null>(null)
+
+  const run = async () => {
+    setBusy(true)
+    try {
+      const res = await api.post<RuleTestResult>('/rules/test', {
+        source_ip: sourceIp.trim(),
+        trap_oid: trapOid.trim(),
+        message: message.trim(),
+      })
+      setResult(res)
+    } catch (err) {
+      toast.push('error', err instanceof ApiError ? err.message : 'Could not test the rules.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title="Test rules against a sample event"
+      description="Dry-run — nothing is stored or sent. See which rule would match and where it routes."
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Close</Button>
+          <Button variant="primary" onClick={run} loading={busy} disabled={!trapOid.trim()}>
+            Run test <ArrowRight className="h-4 w-4" />
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Trap OID" hint="required">
+            <Input value={trapOid} onChange={(e) => setTrapOid(e.target.value)} className="font-mono" autoFocus placeholder="1.3.6.1.6.3.1.1.5.3" />
+          </Field>
+          <Field label="Source IP" hint="optional; matches device rules">
+            <Input value={sourceIp} onChange={(e) => setSourceIp(e.target.value)} className="font-mono" placeholder="10.0.0.1" />
+          </Field>
+        </div>
+        <Field label="Message" hint="optional; matched by varbind-regex rules">
+          <Input value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Interface Port2 link is down" />
+        </Field>
+
+        {result && (
+          <div className="space-y-2 rounded-lg border border-border bg-surface/50 p-4 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-muted">Event:</span>
+              <Mono>{result.resolved_name}</Mono>
+              {result.unmapped && <Badge tone="muted">unmapped</Badge>}
+              {result.severity_name && <SeverityBadge name={result.severity_name} />}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-muted">Rule:</span>
+              {result.matched ? (
+                <>
+                  <span className="font-medium text-foreground">{result.matched_rule_name || 'matched'}</span>
+                  {result.bypass_flood_control && (
+                    <Badge tone="holo"><Zap className="h-3 w-3" /> bypass flood</Badge>
+                  )}
+                </>
+              ) : (
+                <span className="text-muted">No rule matched — falls back to severity default routes.</span>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-muted">Routes to:</span>
+              {result.channel_names && result.channel_names.length > 0 ? (
+                result.channel_names.map((n) => <Badge key={n} tone="muted">{n}</Badge>)
+              ) : (
+                <span className="text-muted">no channels</span>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </Dialog>
   )
 }
 
