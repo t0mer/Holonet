@@ -32,9 +32,10 @@ Single Go binary, embedded React console, pure-Go SQLite, `FROM scratch` image.
   credential is AES-256-GCM encrypted with a boot-time master key. Nothing
   sensitive is ever returned by the API or written in plaintext.
 - **Modern console** — responsive React/Vite SPA embedded in the binary, with a
-  sortable Events tab, drag-free rule reordering, live refresh, dark/light, and
-  a first-run setup wizard. Auth can be disabled when fronted by Cloudflare
-  Access.
+  sortable Events tab, drag-to-reorder rules with an inline **Test** (dry-run a
+  sample event against the rules), one-click **map** for unmapped OIDs straight
+  from the Events drawer, live refresh, dark/light, and a first-run setup wizard.
+  Auth can be disabled when fronted by Cloudflare Access.
 - **Prometheus metrics** at `/metrics`, **OpenAPI** at `/api/docs`.
 
 ---
@@ -50,7 +51,15 @@ Click any row for the decoded varbinds, per-channel dispatch status, and a
 ![Event detail](assets/screenshots/event-detail.png)
 
 ### Rules — ordered, first-match classification and routing
+Drag to reorder; **Test** dry-runs a sample event so you can see which rule wins
+and where it routes before saving.
+
 ![Rules](assets/screenshots/rules.png)
+![Test a rule](assets/screenshots/rule-test.png)
+
+Unmapped OIDs can be named on the spot from the Events drawer:
+
+![Map an OID](assets/screenshots/oid-quickmap.png)
 
 ### Channels — Shoutrrr / WhatsApp / webhook, with a real Send test
 ![Channels](assets/screenshots/channels.png)
@@ -150,7 +159,27 @@ flood strategy, bind address) lives in SQLite and is managed from the UI/API.
 | `--http-addr` | `HOLONET_HTTP_ADDR` | `:8080` | Web/API listen address |
 | `--secure-cookies` | `HOLONET_SECURE_COOKIES` | `false` | Set the `Secure` flag on session cookies (enable behind TLS) |
 | `--log-level` | `HOLONET_LOG_LEVEL` | `info` | `debug` / `info` / `warning` / `error` |
+| `--service <action>` | | | Manage the OS service: `install` / `uninstall` / `start` / `stop` / `restart` |
+| `--reset-password` | | | Interactively reset the admin password, then exit |
 | `--version` | | | Print version and exit |
+
+### Running as a service
+
+`--service install` registers HoloNet with the OS service manager (systemd,
+launchd, Windows services, …) using the flags you pass alongside it:
+
+```sh
+sudo HOLONET_MASTER_KEY="$(openssl rand -base64 32)" \
+  holonet --service install --db-path /var/lib/holonet/holonet.db --master-key "$HOLONET_MASTER_KEY"
+sudo holonet --service start
+```
+
+The generated unit bakes in the flags so the service starts with the same
+configuration. The master key is written into the unit's `ExecStart` when passed
+as a flag; to keep it out of the unit file, install without `--master-key` and
+put `HOLONET_MASTER_KEY` in the service environment (e.g. systemd's
+`/etc/sysconfig/holonet`). Forgot the admin password? `holonet --reset-password`
+prompts for a new one (needs a TTY).
 
 Precedence: `ENV` → `--flag` → built-in default. The SNMP **bind address** is
 stored in SQLite (default `0.0.0.0:1162`) and edited from **Sinks**. Binding a
