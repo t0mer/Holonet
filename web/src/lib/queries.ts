@@ -11,6 +11,7 @@ import type {
   Severity,
   Settings,
   TrapView,
+  V3User,
 } from './types'
 
 const LIVE_REFRESH = 60_000 // design: live data refreshes ~60s
@@ -82,6 +83,13 @@ export function useCommunities() {
   return useQuery({
     queryKey: ['communities'],
     queryFn: () => api.get<Community[] | null>('/sinks/communities').then((v) => v ?? []),
+  })
+}
+
+export function useV3Users() {
+  return useQuery({
+    queryKey: ['v3users'],
+    queryFn: () => api.get<V3User[] | null>('/sinks/v3users').then((v) => v ?? []),
   })
 }
 

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Plus, Trash2, KeyRound, Save, Lock } from 'lucide-react'
+import { Plus, Trash2, KeyRound, Save, ShieldCheck } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
-import type { Community } from '@/lib/types'
-import { useCommunities, useSettings, useInvalidate } from '@/lib/queries'
+import type { Community, V3User } from '@/lib/types'
+import { useCommunities, useV3Users, useSettings, useInvalidate } from '@/lib/queries'
 import { useToast } from '@/lib/toast'
 import { PageHeader, LoadingRow, ErrorNote, EmptyState, Mono } from '@/components/common'
 import { Card, CardBody, CardHeader } from '@/components/ui/card'
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Field } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { Select } from '@/components/ui/select'
 import { Dialog } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
@@ -62,20 +63,225 @@ export function SinksPage() {
           </CardBody>
         </Card>
 
-        <Card>
-          <CardBody className="flex items-start gap-3">
-            <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
-            <p className="text-sm text-muted">
-              SNMPv3 users (USM auth/priv credentials) arrive in a later release. For now, use v2c
-              communities above.
-            </p>
-          </CardBody>
-        </Card>
+        <V3Users />
       </div>
 
       {adding && <AddCommunity onClose={() => setAdding(false)} />}
       <DeleteCommunity community={deleting} onClose={() => setDeleting(null)} />
     </div>
+  )
+}
+
+const AUTH_PROTOCOLS = ['SHA', 'SHA256', 'SHA512', 'SHA224', 'SHA384', 'MD5']
+const PRIV_PROTOCOLS = ['AES', 'AES256', 'AES192', 'DES']
+
+function V3Users() {
+  const { data: users = [], isLoading, error } = useV3Users()
+  const [adding, setAdding] = useState(false)
+  const [deleting, setDeleting] = useState<V3User | null>(null)
+
+  return (
+    <Card>
+      <CardHeader
+        title="SNMPv3 users"
+        description="USM credentials. authNoPriv minimum, authPriv recommended — passwords are sealed at rest."
+        action={
+          <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
+            <Plus className="h-4 w-4" /> Add user
+          </Button>
+        }
+      />
+      <CardBody className="p-0">
+        {error ? (
+          <div className="p-5">
+            <ErrorNote message={(error as Error).message} />
+          </div>
+        ) : isLoading ? (
+          <LoadingRow />
+        ) : users.length === 0 ? (
+          <EmptyState
+            icon={<ShieldCheck className="h-8 w-8" />}
+            title="No v3 users yet"
+            description="Add a USM user to accept authenticated (and optionally encrypted) v3 traps."
+          />
+        ) : (
+          <ul className="divide-y divide-border/60">
+            {users.map((u) => (
+              <V3UserRow key={u.id} user={u} onDelete={() => setDeleting(u)} />
+            ))}
+          </ul>
+        )}
+      </CardBody>
+      {adding && <AddV3User onClose={() => setAdding(false)} />}
+      <DeleteV3User user={deleting} onClose={() => setDeleting(null)} />
+    </Card>
+  )
+}
+
+function V3UserRow({ user, onDelete }: { user: V3User; onDelete: () => void }) {
+  const invalidate = useInvalidate()
+  const toast = useToast()
+  const toggle = async (enabled: boolean) => {
+    try {
+      await api.put(`/sinks/v3users/${user.id}`, {
+        username: user.username,
+        security_level: user.security_level,
+        auth_protocol: user.auth_protocol,
+        priv_protocol: user.priv_protocol,
+        engine_id: user.engine_id,
+        enabled,
+      })
+      invalidate('v3users')
+    } catch (err) {
+      toast.push('error', err instanceof ApiError ? err.message : 'Could not update user.')
+    }
+  }
+  return (
+    <li className="flex items-center justify-between gap-3 px-5 py-3">
+      <div className="flex items-center gap-3">
+        <ShieldCheck className="h-4 w-4 text-muted" />
+        <div>
+          <p className="font-mono text-sm font-medium text-foreground">{user.username}</p>
+          <p className="text-xs text-muted">
+            {user.security_level} · auth {user.auth_protocol}
+            {user.security_level === 'authPriv' ? ` · priv ${user.priv_protocol}` : ''}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        {user.enabled ? <Badge tone="success">enabled</Badge> : <Badge tone="muted">disabled</Badge>}
+        <Switch checked={user.enabled} onChange={toggle} aria-label="Enable user" />
+        <Button variant="ghost" size="icon" onClick={onDelete} aria-label="Delete">
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+    </li>
+  )
+}
+
+function AddV3User({ onClose }: { onClose: () => void }) {
+  const invalidate = useInvalidate()
+  const toast = useToast()
+  const [busy, setBusy] = useState(false)
+  const [form, setForm] = useState({
+    username: '',
+    security_level: 'authPriv',
+    auth_protocol: 'SHA',
+    auth_pass: '',
+    priv_protocol: 'AES',
+    priv_pass: '',
+    engine_id: '',
+    enabled: true,
+  })
+  const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }))
+  const priv = form.security_level === 'authPriv'
+  const valid = form.username.trim() && form.auth_pass.length >= 8 && (!priv || form.priv_pass.length >= 8)
+
+  const save = async () => {
+    setBusy(true)
+    try {
+      await api.post('/sinks/v3users', {
+        ...form,
+        username: form.username.trim(),
+        priv_pass: priv ? form.priv_pass : '',
+        priv_protocol: priv ? form.priv_protocol : '',
+      })
+      toast.push('success', 'SNMPv3 user added.')
+      invalidate('v3users')
+      onClose()
+    } catch (err) {
+      toast.push('error', err instanceof ApiError ? err.message : 'Could not add user.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title="Add SNMPv3 user"
+      description="Passwords are sealed on save and never shown again. noAuthNoPriv is not allowed."
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" onClick={save} loading={busy} disabled={!valid}>
+            Add user
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="Username">
+          <Input value={form.username} onChange={(e) => set('username', e.target.value)} className="font-mono" autoFocus placeholder="sfvhuser" />
+        </Field>
+        <Field label="Security level">
+          <Select value={form.security_level} onChange={(e) => set('security_level', e.target.value)}>
+            <option value="authNoPriv">authNoPriv — authenticate only</option>
+            <option value="authPriv">authPriv — authenticate + encrypt (recommended)</option>
+          </Select>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Auth protocol">
+            <Select value={form.auth_protocol} onChange={(e) => set('auth_protocol', e.target.value)}>
+              {AUTH_PROTOCOLS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </Select>
+          </Field>
+          <Field label="Auth password" hint="min 8 characters">
+            <Input type="password" value={form.auth_pass} onChange={(e) => set('auth_pass', e.target.value)} placeholder="••••••••" />
+          </Field>
+        </div>
+        {priv && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Privacy protocol">
+              <Select value={form.priv_protocol} onChange={(e) => set('priv_protocol', e.target.value)}>
+                {PRIV_PROTOCOLS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </Select>
+            </Field>
+            <Field label="Privacy password" hint="min 8 characters">
+              <Input type="password" value={form.priv_pass} onChange={(e) => set('priv_pass', e.target.value)} placeholder="••••••••" />
+            </Field>
+          </div>
+        )}
+        <Field label="Engine ID" hint="optional — leave blank to auto-discover">
+          <Input value={form.engine_id} onChange={(e) => set('engine_id', e.target.value)} className="font-mono" placeholder="" />
+        </Field>
+        <div className="flex items-center justify-between rounded-lg border border-border p-3">
+          <span className="text-sm font-medium text-foreground">Enabled</span>
+          <Switch checked={form.enabled} onChange={(v) => set('enabled', v)} aria-label="Enabled" />
+        </div>
+      </div>
+    </Dialog>
+  )
+}
+
+function DeleteV3User({ user, onClose }: { user: V3User | null; onClose: () => void }) {
+  const invalidate = useInvalidate()
+  const toast = useToast()
+  const [busy, setBusy] = useState(false)
+  const remove = async () => {
+    if (!user) return
+    setBusy(true)
+    try {
+      await api.del(`/sinks/v3users/${user.id}`)
+      toast.push('success', 'User removed.')
+      invalidate('v3users')
+      onClose()
+    } catch (err) {
+      toast.push('error', err instanceof ApiError ? err.message : 'Could not delete user.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <ConfirmDialog
+      open={user != null}
+      onClose={onClose}
+      onConfirm={remove}
+      loading={busy}
+      title="Delete SNMPv3 user"
+      body={`Remove user "${user?.username}"? v3 traps using it will no longer be accepted.`}
+    />
   )
 }
 

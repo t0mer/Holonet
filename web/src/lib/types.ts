@@ -38,6 +38,16 @@ export interface Community {
   enabled: boolean
 }
 
+export interface V3User {
+  id: number
+  username: string
+  security_level: string // authNoPriv | authPriv
+  auth_protocol: string
+  priv_protocol: string
+  engine_id: string
+  enabled: boolean
+}
+
 export interface Device {
   id: number
   source_ip: string
