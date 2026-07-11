@@ -1,0 +1,17 @@
+.git
+.github
+dist
+scans
+docs
+*.md
+!README.md
+web/node_modules
+web/.vite
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+.env
+.env.*
+CLAUDE.md
+.claude

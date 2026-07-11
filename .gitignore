@@ -37,8 +37,14 @@ vendor/
 web/node_modules/
 web/dist/
 web/.vite/
+web/*.tsbuildinfo
 *.log
 npm-debug.log*
+
+# Embedded built SPA — generated at build time (CI/Docker), keep only the
+# placeholder so the go:embed compiles before any build.
+/internal/webui/dist/*
+!/internal/webui/dist/.gitkeep
 
 # Local dev config / data
 .env

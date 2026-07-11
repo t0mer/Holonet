@@ -1,0 +1,24 @@
+services:
+  holonet:
+    image: techblog/holonet:latest
+    ports:
+      - "162:1162/udp"   # host 162 → container 1162 (unprivileged inside)
+      - "8080:8080"      # web UI + REST API
+    environment:
+      # Required: master key that seals secrets at rest. Generate once with
+      # `openssl rand -base64 32` and keep it stable — losing it makes sealed
+      # community strings / channel credentials unreadable.
+      HOLONET_MASTER_KEY: ${HOLONET_MASTER_KEY}
+      LOG_LEVEL: info
+      # Set true when serving over TLS so session cookies get the Secure flag.
+      # HOLONET_SECURE_COOKIES: "true"
+    volumes:
+      # Named volume: inherits the image's /data ownership (non-root uid 10001).
+      # Holds the SQLite DB + WAL. Persist it — it is the source of truth.
+      - holonet-data:/data
+    # Optional: bind 162 directly inside the container instead of remapping.
+    # cap_add: ["NET_BIND_SERVICE"]
+    restart: unless-stopped
+
+volumes:
+  holonet-data:
