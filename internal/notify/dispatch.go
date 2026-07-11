@@ -51,6 +51,12 @@ func NewDispatcher(u Unsealer, timeout time.Duration, retries int) *Dispatcher {
 	return &Dispatcher{unsealer: u, timeout: timeout, retries: retries, build: BuildNotifier}
 }
 
+// UseBuilder overrides how notifiers are constructed from a channel kind and
+// config. Used by tests to inject fakes.
+func (d *Dispatcher) UseBuilder(fn func(kind, configJSON string) (Notifier, error)) {
+	d.build = fn
+}
+
 // Dispatch sends msg to every channel concurrently and returns one Result per
 // channel (order not guaranteed).
 func (d *Dispatcher) Dispatch(ctx context.Context, channels []store.Channel, msg Message) []Result {
