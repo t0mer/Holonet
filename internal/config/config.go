@@ -20,6 +20,12 @@ type Bootstrap struct {
 	MasterKey string // AES-GCM master key for secret sealing
 	HTTPAddr  string // listen address for the web/API server
 	LogLevel  string // debug|info|warning|error
+
+	// One-shot admin actions (Slice 1 bootstrap, before the UI exists). When
+	// set, the binary performs the action and exits instead of running the
+	// daemon. Superseded by the API/UI in Slice 2 but kept for scripting.
+	AddCommunity string // seal + insert a v2c community string
+	AddShoutrrr  string // "name=shoutrrr-url" — seal + insert a shoutrrr channel
 }
 
 // Defaults for bootstrap values.
@@ -39,6 +45,8 @@ func Load(args []string) (Bootstrap, bool, error) {
 	httpAddr := fs.String("http-addr", DefaultHTTPAddr, "listen address for the web/API server")
 	logLevel := fs.String("log-level", DefaultLogLevel, "log level: debug|info|warning|error")
 	showVersion := fs.Bool("version", false, "print version and exit")
+	addCommunity := fs.String("add-community", "", "seal and insert a v2c community string, then exit")
+	addShoutrrr := fs.String("add-shoutrrr", "", "insert a shoutrrr channel as \"name=url\", then exit")
 
 	if err := fs.Parse(args); err != nil {
 		return Bootstrap{}, false, err
@@ -63,6 +71,9 @@ func Load(args []string) (Bootstrap, bool, error) {
 		MasterKey: firstNonEmpty(*masterKey, v.GetString("master_key")),
 		HTTPAddr:  firstNonEmpty(*httpAddr, v.GetString("http_addr"), DefaultHTTPAddr),
 		LogLevel:  firstNonEmpty(*logLevel, v.GetString("log_level"), DefaultLogLevel),
+
+		AddCommunity: *addCommunity,
+		AddShoutrrr:  *addShoutrrr,
 	}
 	return bs, false, nil
 }
