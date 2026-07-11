@@ -23,6 +23,31 @@ import (
 // Replayer re-runs routing for a stored trap and returns the new trap id.
 type Replayer func(ctx context.Context, trapID int64) (int64, error)
 
+// RuleTestInput is a sample event for a rule dry-run.
+type RuleTestInput struct {
+	SourceIP string `json:"source_ip"`
+	TrapOID  string `json:"trap_oid"`
+	Message  string `json:"message"`
+}
+
+// RuleTestResult is the classification a sample event would receive, without
+// persisting or dispatching anything.
+type RuleTestResult struct {
+	ResolvedName       string   `json:"resolved_name"`
+	Unmapped           bool     `json:"unmapped"`
+	SeverityID         *int64   `json:"severity_id"`
+	SeverityName       string   `json:"severity_name"`
+	Matched            bool     `json:"matched"`
+	MatchedRuleID      *int64   `json:"matched_rule_id"`
+	MatchedRuleName    string   `json:"matched_rule_name"`
+	BypassFloodControl bool     `json:"bypass_flood_control"`
+	ChannelIDs         []int64  `json:"channel_ids"`
+	ChannelNames       []string `json:"channel_names"`
+}
+
+// RuleTester dry-runs the decoder + rule engine against a sample event.
+type RuleTester func(ctx context.Context, in RuleTestInput) (RuleTestResult, error)
+
 // FloodReloader re-reads flood settings and applies them at runtime.
 type FloodReloader func()
 
@@ -33,6 +58,7 @@ type Deps struct {
 	Auth        *auth.Manager
 	Dispatch    *notify.Dispatcher
 	Replay      Replayer
+	RuleTest    RuleTester
 	ReloadFlood FloodReloader
 	Metrics     http.Handler // Prometheus /metrics handler (optional)
 	Version     string

@@ -71,6 +71,8 @@ paths:
     post: { summary: Create rule, responses: { "201": { description: Created } } }
   /api/v1/rules/reorder:
     put: { summary: Reorder rules by id list, responses: { "200": { description: OK } } }
+  /api/v1/rules/test:
+    post: { summary: Dry-run classify a sample event (no persist/dispatch), responses: { "200": { description: OK } } }
   /api/v1/rules/{id}:
     put: { summary: Update rule, responses: { "200": { description: OK } } }
     delete: { summary: Delete rule, responses: { "204": { description: Deleted } } }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io/fs"
 	"net/http"
@@ -137,6 +138,30 @@ func TestRuleCreateAndList(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &rules)
 	if len(rules) != 1 || rules[0].Name != "links" {
 		t.Errorf("rules = %+v", rules)
+	}
+}
+
+func TestRuleTestEndpoint(t *testing.T) {
+	s := testServer(t)
+	c := authed(t, s)
+
+	// Not wired → 501.
+	if rec := do(t, s, "POST", "/api/v1/rules/test", `{"trap_oid":"1.2.3"}`, c); rec.Code != 501 {
+		t.Fatalf("unwired rule test = %d, want 501", rec.Code)
+	}
+
+	// Wire a stub tester and confirm it is invoked and echoed back.
+	s.deps.RuleTest = func(_ context.Context, in RuleTestInput) (RuleTestResult, error) {
+		return RuleTestResult{ResolvedName: "linkDown", Matched: true, SeverityName: "Critical"}, nil
+	}
+	rec := do(t, s, "POST", "/api/v1/rules/test", `{"source_ip":"10.0.0.1","trap_oid":"1.3.6.1.6.3.1.1.5.3"}`, c)
+	if rec.Code != 200 {
+		t.Fatalf("rule test = %d: %s", rec.Code, rec.Body)
+	}
+	var res RuleTestResult
+	json.Unmarshal(rec.Body.Bytes(), &res)
+	if !res.Matched || res.SeverityName != "Critical" {
+		t.Errorf("result = %+v", res)
 	}
 }
 

@@ -44,6 +44,7 @@ func (s *Server) mountResources(r chi.Router) {
 	r.Get("/rules", s.listRules)
 	r.Post("/rules", s.createRule)
 	r.Put("/rules/reorder", s.reorderRules)
+	r.Post("/rules/test", s.testRule)
 	r.Put("/rules/{id}", s.updateRule)
 	r.Delete("/rules/{id}", s.deleteRule)
 
@@ -413,6 +414,24 @@ func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) testRule(w http.ResponseWriter, r *http.Request) {
+	if s.deps.RuleTest == nil {
+		writeErr(w, http.StatusNotImplemented, "rule test not available")
+		return
+	}
+	var in RuleTestInput
+	if err := decodeJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	res, err := s.deps.RuleTest(r.Context(), in)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (s *Server) reorderRules(w http.ResponseWriter, r *http.Request) {
