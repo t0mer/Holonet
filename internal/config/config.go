@@ -16,10 +16,11 @@ import (
 
 // Bootstrap holds the values needed before the store opens.
 type Bootstrap struct {
-	DBPath    string // sqlite database file path
-	MasterKey string // AES-GCM master key for secret sealing
-	HTTPAddr  string // listen address for the web/API server
-	LogLevel  string // debug|info|warning|error
+	DBPath        string // sqlite database file path
+	MasterKey     string // AES-GCM master key for secret sealing
+	HTTPAddr      string // listen address for the web/API server
+	LogLevel      string // debug|info|warning|error
+	SecureCookies bool   // set the Secure flag on session cookies (enable behind TLS)
 
 	// One-shot admin actions (Slice 1 bootstrap, before the UI exists). When
 	// set, the binary performs the action and exits instead of running the
@@ -44,6 +45,7 @@ func Load(args []string) (Bootstrap, bool, error) {
 	masterKey := fs.String("master-key", "", "master key for sealing secrets at rest")
 	httpAddr := fs.String("http-addr", DefaultHTTPAddr, "listen address for the web/API server")
 	logLevel := fs.String("log-level", DefaultLogLevel, "log level: debug|info|warning|error")
+	secureCookies := fs.Bool("secure-cookies", false, "set the Secure flag on session cookies (enable when served over TLS)")
 	showVersion := fs.Bool("version", false, "print version and exit")
 	addCommunity := fs.String("add-community", "", "seal and insert a v2c community string, then exit")
 	addShoutrrr := fs.String("add-shoutrrr", "", "insert a shoutrrr channel as \"name=url\", then exit")
@@ -65,12 +67,14 @@ func Load(args []string) (Bootstrap, bool, error) {
 	_ = v.BindPFlag("master_key", fs.Lookup("master-key"))
 	_ = v.BindPFlag("http_addr", fs.Lookup("http-addr"))
 	_ = v.BindPFlag("log_level", fs.Lookup("log-level"))
+	_ = v.BindPFlag("secure_cookies", fs.Lookup("secure-cookies"))
 
 	bs := Bootstrap{
-		DBPath:    firstNonEmpty(*dbPath, v.GetString("db_path"), DefaultDBPath),
-		MasterKey: firstNonEmpty(*masterKey, v.GetString("master_key")),
-		HTTPAddr:  firstNonEmpty(*httpAddr, v.GetString("http_addr"), DefaultHTTPAddr),
-		LogLevel:  firstNonEmpty(*logLevel, v.GetString("log_level"), DefaultLogLevel),
+		DBPath:        firstNonEmpty(*dbPath, v.GetString("db_path"), DefaultDBPath),
+		MasterKey:     firstNonEmpty(*masterKey, v.GetString("master_key")),
+		HTTPAddr:      firstNonEmpty(*httpAddr, v.GetString("http_addr"), DefaultHTTPAddr),
+		LogLevel:      firstNonEmpty(*logLevel, v.GetString("log_level"), DefaultLogLevel),
+		SecureCookies: *secureCookies || v.GetBool("secure_cookies"),
 
 		AddCommunity: *addCommunity,
 		AddShoutrrr:  *addShoutrrr,
