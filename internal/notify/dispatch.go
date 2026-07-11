@@ -114,8 +114,10 @@ func BuildNotifier(kind, configJSON string) (Notifier, error) {
 	switch kind {
 	case KindShoutrrr:
 		return NewShoutrrr(configJSON)
-	case KindWhatsApp, KindWebhook:
-		return nil, fmt.Errorf("notify: channel kind %q not implemented yet", kind)
+	case KindWhatsApp:
+		return NewWhatsApp(configJSON)
+	case KindWebhook:
+		return NewWebhook(configJSON)
 	default:
 		return nil, fmt.Errorf("notify: unknown channel kind %q", kind)
 	}
