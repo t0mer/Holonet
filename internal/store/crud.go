@@ -196,6 +196,25 @@ func (s *Store) ListChannels() ([]Channel, error) {
 	return out, rows.Err()
 }
 
+// ChannelsByIDs returns the enabled channels among the given ids, preserving no
+// particular order. Disabled or missing ids are silently skipped.
+func (s *Store) ChannelsByIDs(ids []int64) ([]Channel, error) {
+	out := make([]Channel, 0, len(ids))
+	for _, id := range ids {
+		c, err := s.GetChannel(id)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if c.Enabled {
+			out = append(out, *c)
+		}
+	}
+	return out, nil
+}
+
 // GetChannel returns one channel by id, or ErrNotFound.
 func (s *Store) GetChannel(id int64) (*Channel, error) {
 	var c Channel

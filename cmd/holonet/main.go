@@ -15,8 +15,10 @@ import (
 	"github.com/t0mer/holonet/internal/config"
 	"github.com/t0mer/holonet/internal/crypto"
 	"github.com/t0mer/holonet/internal/decode"
+	"github.com/t0mer/holonet/internal/flood"
 	"github.com/t0mer/holonet/internal/notify"
 	"github.com/t0mer/holonet/internal/pipeline"
+	"github.com/t0mer/holonet/internal/rules"
 	"github.com/t0mer/holonet/internal/snmp"
 	"github.com/t0mer/holonet/internal/store"
 	"github.com/t0mer/holonet/internal/version"
@@ -113,8 +115,17 @@ func runDaemon(st *store.Store, sealer *crypto.Sealer, log *slog.Logger) error {
 	}
 
 	decoder := decode.New(st)
+	engine := rules.New(st)
 	dispatcher := notify.NewDispatcher(sealer, 10*time.Second, 2)
-	proc := pipeline.New(st, decoder, dispatcher, log)
+
+	// Flood controller — config from settings, reloadable at runtime.
+	settings, _ := st.AllSettings()
+	floodCfg := flood.ParseConfig(settings)
+	var proc *pipeline.Processor
+	fc := flood.New(floodCfg, func(r flood.Rollup) { proc.FloodFlush(ctx)(r) })
+	proc = pipeline.New(st, decoder, engine, fc, dispatcher, log)
+	go fc.Start(ctx.Done(), time.Second, time.Now)
+	log.Info("flood control active", "strategy", fc.Strategy())
 
 	traps := make(chan snmp.RawTrap, 256)
 	go proc.Run(ctx, traps)
