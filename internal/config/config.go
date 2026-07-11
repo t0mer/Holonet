@@ -27,6 +27,10 @@ type Bootstrap struct {
 	// daemon. Superseded by the API/UI in Slice 2 but kept for scripting.
 	AddCommunity string // seal + insert a v2c community string
 	AddShoutrrr  string // "name=shoutrrr-url" — seal + insert a shoutrrr channel
+
+	// Lifecycle actions.
+	Service       string // install|uninstall|start|stop|restart (kardianos/service)
+	ResetPassword bool   // interactively reset the admin password, then exit
 }
 
 // Defaults for bootstrap values.
@@ -49,6 +53,8 @@ func Load(args []string) (Bootstrap, bool, error) {
 	showVersion := fs.Bool("version", false, "print version and exit")
 	addCommunity := fs.String("add-community", "", "seal and insert a v2c community string, then exit")
 	addShoutrrr := fs.String("add-shoutrrr", "", "insert a shoutrrr channel as \"name=url\", then exit")
+	svc := fs.String("service", "", "OS service control: install|uninstall|start|stop|restart")
+	resetPassword := fs.Bool("reset-password", false, "interactively reset the admin password, then exit")
 
 	if err := fs.Parse(args); err != nil {
 		return Bootstrap{}, false, err
@@ -78,6 +84,9 @@ func Load(args []string) (Bootstrap, bool, error) {
 
 		AddCommunity: *addCommunity,
 		AddShoutrrr:  *addShoutrrr,
+
+		Service:       *svc,
+		ResetPassword: *resetPassword,
 	}
 	return bs, false, nil
 }

@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
-	"net/http"
+	"github.com/kardianos/service"
+	"golang.org/x/term"
 
 	"github.com/t0mer/holonet/internal/api"
 	"github.com/t0mer/holonet/internal/auth"
@@ -50,6 +50,29 @@ func run(args []string) error {
 	log := newLogger(bs.LogLevel)
 	slog.SetDefault(log)
 
+	// Service control (install/uninstall/start/stop/restart) needs neither the
+	// database nor the master key.
+	if bs.Service != "" {
+		svc, err := newService(bs, noopProgram{})
+		if err != nil {
+			return err
+		}
+		if bs.MasterKey == "" {
+			log.Warn("installing service without a master key; set HOLONET_MASTER_KEY in the service environment or reinstall with --master-key")
+		}
+		return service.Control(svc, bs.Service)
+	}
+
+	// Password reset needs the database but not the master key.
+	if bs.ResetPassword {
+		st, err := store.Open(bs.DBPath)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		return resetPassword(st, log)
+	}
+
 	if err := bs.Validate(); err != nil {
 		return err
 	}
@@ -70,7 +93,127 @@ func run(args []string) error {
 		return runAdmin(bs, st, sealer, log)
 	}
 
-	return runDaemon(bs, st, sealer, log)
+	// Run under kardianos/service so the same path serves a foreground run and a
+	// managed OS service.
+	svc, err := newService(bs, &program{bs: bs, st: st, sealer: sealer, log: log})
+	if err != nil {
+		return err
+	}
+	return svc.Run()
+}
+
+// newService builds the kardianos service with the daemon's flags baked in so an
+// installed service starts with the same configuration.
+func newService(bs config.Bootstrap, prg service.Interface) (service.Service, error) {
+	return service.New(prg, &service.Config{
+		Name:        "holonet",
+		DisplayName: "HoloNet",
+		Description: "SNMP trap → messaging bridge",
+		Arguments:   serviceArgs(bs),
+	})
+}
+
+// serviceArgs reconstructs the daemon flags for the installed unit. The master
+// key is included when present (visible in the service definition); operators
+// who prefer to keep it out can install without it and set HOLONET_MASTER_KEY in
+// the service environment instead.
+func serviceArgs(bs config.Bootstrap) []string {
+	args := []string{
+		"--db-path", bs.DBPath,
+		"--http-addr", bs.HTTPAddr,
+		"--log-level", bs.LogLevel,
+	}
+	if bs.SecureCookies {
+		args = append(args, "--secure-cookies")
+	}
+	if bs.MasterKey != "" {
+		args = append(args, "--master-key", bs.MasterKey)
+	}
+	return args
+}
+
+// program adapts the daemon to the kardianos service lifecycle.
+type program struct {
+	bs     config.Bootstrap
+	st     *store.Store
+	sealer *crypto.Sealer
+	log    *slog.Logger
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+func (p *program) Start(service.Service) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	p.cancel = cancel
+	p.done = make(chan struct{})
+	go func() {
+		defer close(p.done)
+		if err := runDaemon(ctx, p.bs, p.st, p.sealer, p.log); err != nil {
+			p.log.Error("daemon exited with error", "err", err)
+		}
+	}()
+	return nil
+}
+
+func (p *program) Stop(service.Service) error {
+	if p.cancel != nil {
+		p.cancel()
+	}
+	select {
+	case <-p.done:
+	case <-time.After(12 * time.Second):
+		p.log.Warn("daemon shutdown timed out")
+	}
+	return nil
+}
+
+// noopProgram satisfies service.Interface for control-only invocations.
+type noopProgram struct{}
+
+func (noopProgram) Start(service.Service) error { return nil }
+func (noopProgram) Stop(service.Service) error  { return nil }
+
+// resetPassword interactively updates the admin password.
+func resetPassword(st *store.Store, log *slog.Logger) error {
+	username, _, err := st.GetAdmin()
+	if err != nil {
+		return fmt.Errorf("no admin account configured; complete first-run setup in the web UI first")
+	}
+	fmt.Printf("Resetting password for admin user %q\n", username)
+	pw, err := promptPassword("New password (min 8 chars): ")
+	if err != nil {
+		return err
+	}
+	if len(pw) < 8 {
+		return fmt.Errorf("password must be at least 8 characters")
+	}
+	confirm, err := promptPassword("Confirm password: ")
+	if err != nil {
+		return err
+	}
+	if pw != confirm {
+		return fmt.Errorf("passwords do not match")
+	}
+	hash, err := auth.HashPassword(pw)
+	if err != nil {
+		return err
+	}
+	if err := st.UpdateAdminPassword(username, hash); err != nil {
+		return err
+	}
+	log.Info("admin password updated", "username", username)
+	return nil
+}
+
+// promptPassword reads a password from the terminal without echo.
+func promptPassword(prompt string) (string, error) {
+	fmt.Print(prompt)
+	b, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Println()
+	if err != nil {
+		return "", fmt.Errorf("read password: %w", err)
+	}
+	return strings.TrimSpace(string(b)), nil
 }
 
 // runAdmin performs the requested one-shot bootstrap action(s) and returns.
@@ -105,10 +248,10 @@ func runAdmin(bs config.Bootstrap, st *store.Store, sealer *crypto.Sealer, log *
 	return nil
 }
 
-// runDaemon starts the trap pipeline and the web/API server, blocking until a
-// shutdown signal.
-func runDaemon(bs config.Bootstrap, st *store.Store, sealer *crypto.Sealer, log *slog.Logger) error {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+// runDaemon starts the trap pipeline and the web/API server, blocking until the
+// context is cancelled (by the service lifecycle) or a fatal error.
+func runDaemon(parent context.Context, bs config.Bootstrap, st *store.Store, sealer *crypto.Sealer, log *slog.Logger) error {
+	ctx, stop := context.WithCancel(parent)
 	defer stop()
 
 	allow, err := communityChecker(st, sealer, log)
@@ -150,6 +293,7 @@ func runDaemon(bs config.Bootstrap, st *store.Store, sealer *crypto.Sealer, log 
 		Auth:     authMgr,
 		Dispatch: dispatcher,
 		Replay:   replayFunc(st, proc),
+		RuleTest: ruleTestFunc(st, decoder, engine),
 		ReloadFlood: func() {
 			s, _ := st.AllSettings()
 			fc.Configure(flood.ParseConfig(s))
@@ -218,6 +362,56 @@ func replayFunc(st *store.Store, proc *pipeline.Processor) api.Replayer {
 			Varbinds:   vbs,
 		}
 		return proc.Process(ctx, raw)
+	}
+}
+
+// ruleTestFunc dry-runs the decoder + rule engine against a sample event without
+// persisting or dispatching (design §3.8, Rules inline test).
+func ruleTestFunc(st *store.Store, decoder *decode.Decoder, engine *rules.Engine) api.RuleTester {
+	return func(_ context.Context, in api.RuleTestInput) (api.RuleTestResult, error) {
+		raw := snmp.RawTrap{
+			ReceivedAt: time.Now(),
+			SourceIP:   in.SourceIP,
+			Version:    "test",
+			TrapOID:    in.TrapOID,
+			Varbinds:   []snmp.Varbind{{OID: snmp.SnmpTrapOID, Type: "OID", Value: in.TrapOID}},
+		}
+		ev, err := decoder.Decode(raw)
+		if err != nil {
+			return api.RuleTestResult{}, err
+		}
+		if in.Message != "" {
+			ev.Message = in.Message // let varbind-regex rules match the sample text
+		}
+		d, err := engine.Classify(ev)
+		if err != nil {
+			return api.RuleTestResult{}, err
+		}
+		res := api.RuleTestResult{
+			ResolvedName:       ev.ResolvedName,
+			Unmapped:           ev.Unmapped,
+			SeverityID:         d.SeverityID,
+			Matched:            d.Matched,
+			MatchedRuleID:      d.MatchedRuleID,
+			BypassFloodControl: d.BypassFloodControl,
+			ChannelIDs:         d.ChannelIDs,
+		}
+		if d.SeverityID != nil {
+			if sev, err := st.GetSeverity(*d.SeverityID); err == nil {
+				res.SeverityName = sev.Name
+			}
+		}
+		if d.MatchedRuleID != nil {
+			if rule, err := st.GetRule(*d.MatchedRuleID); err == nil {
+				res.MatchedRuleName = rule.Name
+			}
+		}
+		for _, chID := range d.ChannelIDs {
+			if ch, err := st.GetChannel(chID); err == nil {
+				res.ChannelNames = append(res.ChannelNames, ch.Name)
+			}
+		}
+		return res, nil
 	}
 }
 

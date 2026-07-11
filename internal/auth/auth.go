@@ -75,11 +75,20 @@ func (m *Manager) Setup(username, password string) error {
 	if strings.TrimSpace(username) == "" || len(password) < 8 {
 		return errors.New("auth: username required and password must be at least 8 characters")
 	}
+	hash, err := HashPassword(password)
+	if err != nil {
+		return err
+	}
+	return m.store.CreateAdmin(username, hash)
+}
+
+// HashPassword bcrypt-hashes a password (shared by setup and reset flows).
+func HashPassword(password string) (string, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return fmt.Errorf("auth: hash password: %w", err)
+		return "", fmt.Errorf("auth: hash password: %w", err)
 	}
-	return m.store.CreateAdmin(username, string(hash))
+	return string(hash), nil
 }
 
 // Authenticate verifies credentials against the stored bcrypt hash.
