@@ -1,0 +1,148 @@
+@import 'tailwindcss';
+
+/* Class-based dark mode: .dark on <html> flips the token values below. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+  HoloNet — a network operations console. Dark-slate first; the cyan "holo"
+  accent is used with restraint (active nav, focus rings, primary actions).
+  The severity signal system is the signature and is driven per-event from the
+  API, with these built-in defaults as the fallback.
+*/
+
+:root {
+  --background: #f8fafc;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --border: #e2e8f0;
+  --foreground: #0f172a;
+  --muted: #64748b;
+
+  --holo: #22d3ee;
+  --holo-strong: #0891b2;
+  --holo-contrast: #06131a;
+
+  --sev-critical: #dc2626;
+  --sev-high: #ea580c;
+  --sev-medium: #d97706;
+  --sev-low: #2563eb;
+  --sev-info: #6b7280;
+
+  --ring: #06b6d4;
+}
+
+.dark {
+  --background: #0b1120;
+  --surface: #131c31;
+  --surface-2: #1e293b;
+  --border: #334155;
+  --foreground: #e2e8f0;
+  --muted: #94a3b8;
+
+  --holo: #22d3ee;
+  --holo-strong: #22d3ee;
+  --holo-contrast: #06131a;
+
+  --ring: #22d3ee;
+}
+
+/* Map design tokens into Tailwind's utility namespace (bg-*, text-*, …). */
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+
+  --color-holo: var(--holo);
+  --color-holo-strong: var(--holo-strong);
+  --color-holo-contrast: var(--holo-contrast);
+  --color-ring: var(--ring);
+
+  --font-display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SFMono-Regular', monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    color-scheme: light dark;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+
+  /* Visible, cyan keyboard focus everywhere. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--holo) 35%, transparent);
+  }
+
+  /* Slim, technical scrollbars in dark surfaces. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted);
+    background-clip: content-box;
+  }
+}
+
+/* A restrained cyan glow reserved for the wordmark and critical accents. */
+.holo-glow {
+  text-shadow: 0 0 18px color-mix(in srgb, var(--holo) 55%, transparent);
+}
+
+/* Critical events pulse — subtle, and disabled under reduced-motion. */
+@keyframes holo-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.sev-pulse {
+  animation: holo-pulse 2.4s ease-in-out infinite;
+}
+
+.grid-backdrop {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--border) 40%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--border) 40%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
