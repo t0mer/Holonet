@@ -174,6 +174,7 @@ func runDaemon(bs config.Bootstrap, st *store.Store, sealer *crypto.Sealer, log 
 		V3Users:        v3Users(st, sealer, log),
 		Log:            log,
 		Metrics:        met,
+		Debug:          log.Enabled(ctx, slog.LevelDebug),
 	})
 
 	log.Info("holonet starting", "version", version.Version, "bind", bindAddr)

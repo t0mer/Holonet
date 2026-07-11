@@ -1,6 +1,14 @@
 package snmp
 
-import "testing"
+import (
+	"io"
+	"log"
+	"testing"
+
+	"github.com/gosnmp/gosnmp"
+)
+
+var testLogger = gosnmp.NewLogger(log.New(io.Discard, "", 0))
 
 func TestUSMUserValidate(t *testing.T) {
 	cases := []struct {
@@ -30,7 +38,7 @@ func TestBuildUSMTableSkipsInvalid(t *testing.T) {
 	table, errs := buildUSMTable([]USMUser{
 		{Username: "good", SecurityLevel: SecurityAuthNoPriv, AuthProtocol: "SHA", AuthPass: "authpass12"},
 		{Username: "bad", SecurityLevel: "noAuthNoPriv"},
-	})
+	}, testLogger)
 	if table == nil {
 		t.Fatal("expected a table with the one valid user")
 	}
@@ -40,7 +48,7 @@ func TestBuildUSMTableSkipsInvalid(t *testing.T) {
 }
 
 func TestBuildUSMTableAllInvalid(t *testing.T) {
-	table, errs := buildUSMTable([]USMUser{{Username: "bad", SecurityLevel: "noAuthNoPriv"}})
+	table, errs := buildUSMTable([]USMUser{{Username: "bad", SecurityLevel: "noAuthNoPriv"}}, testLogger)
 	if table != nil {
 		t.Error("expected nil table when no valid users")
 	}

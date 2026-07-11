@@ -2,8 +2,6 @@ package snmp
 
 import (
 	"fmt"
-	"io"
-	"log"
 	"strings"
 
 	"github.com/gosnmp/gosnmp"
@@ -55,8 +53,9 @@ func (u USMUser) Validate() error {
 
 // buildUSMTable constructs a gosnmp security-parameters table from the users.
 // Invalid users are skipped with an error aggregated for the caller to surface.
-func buildUSMTable(users []USMUser) (*gosnmp.SnmpV3SecurityParametersTable, []error) {
-	table := gosnmp.NewSnmpV3SecurityParametersTable(gosnmp.NewLogger(log.New(io.Discard, "", 0)))
+// logger receives gosnmp's internal USM logging (discard unless debugging).
+func buildUSMTable(users []USMUser, logger gosnmp.Logger) (*gosnmp.SnmpV3SecurityParametersTable, []error) {
+	table := gosnmp.NewSnmpV3SecurityParametersTable(logger)
 	var errs []error
 	added := 0
 	for _, u := range users {

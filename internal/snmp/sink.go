@@ -3,8 +3,11 @@ package snmp
 import (
 	"context"
 	"fmt"
+	"io"
+	stdlog "log"
 	"log/slog"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -39,6 +42,7 @@ type Config struct {
 	V3Users        []USMUser                   // enabled SNMPv3 USM users
 	Log            *slog.Logger
 	Metrics        Metrics
+	Debug          bool // route gosnmp's internal decode/USM logging to stderr
 }
 
 // Sink is an SNMP trap listener built on gosnmp's TrapListener, serving v2c and
@@ -49,6 +53,7 @@ type Sink struct {
 	v3users  []USMUser
 	log      *slog.Logger
 	metrics  Metrics
+	debug    bool
 }
 
 // NewSink builds a Sink from Config.
@@ -67,6 +72,7 @@ func NewSink(cfg Config) *Sink {
 		v3users:  cfg.V3Users,
 		log:      log,
 		metrics:  m,
+		debug:    cfg.Debug,
 	}
 }
 
@@ -77,51 +83,123 @@ func NewV2CSink(bindAddr string, allow func(string) bool, log *slog.Logger, m Me
 
 // Start binds the listener and blocks, feeding decoded traps to out until ctx
 // is cancelled (graceful shutdown) or the listener errors.
+//
+// gosnmp's v3 trap parser has a documented history of panics on malformed
+// packets, and those panics fire inside gosnmp's own listen loop — before
+// OnNewTrap, so the handler's recover() cannot catch them. To honour design
+// §3.1 ("must never crash the process"), the listen loop itself is
+// recover-guarded here: a panic is counted, logged, and the listener is rebuilt
+// after a short backoff so trap reception self-heals.
 func (s *Sink) Start(ctx context.Context, out chan<- RawTrap) error {
-	tl := gosnmp.NewTrapListener()
-	tl.Params = gosnmp.Default
-	tl.OnNewTrap = s.handler(ctx, out)
-
-	// Configure SNMPv3 users (design §3.1). Invalid users are surfaced, never
-	// loaded as usable — noAuthNoPriv is rejected.
-	if len(s.v3users) > 0 {
-		table, errs := buildUSMTable(s.v3users)
-		for _, e := range errs {
-			s.log.Warn("snmpv3 user rejected", "err", e)
+	first := true
+	for {
+		err, panicked := s.listenOnce(ctx, out, first)
+		first = false
+		if ctx.Err() != nil {
+			s.log.Info("snmp trap sink stopped")
+			return nil
 		}
-		if table != nil {
-			tl.Params.TrapSecurityParametersTable = table
-			tl.Params.SecurityModel = gosnmp.UserSecurityModel
-			s.log.Info("snmpv3 enabled", "users", len(s.v3users)-len(errs))
+		if !panicked {
+			return err // clean stop or a real bind/listener error
+		}
+		s.metrics.DecodePanic()
+		s.log.Warn("recovered panic in trap listen loop; restarting listener")
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
 
-	errCh := make(chan error, 1)
-	go func() { errCh <- tl.Listen(s.bindAddr) }()
+// listenOnce builds a fresh listener, runs it until ctx is cancelled, the
+// listener returns, or it panics, and reports whether it panicked.
+func (s *Sink) listenOnce(ctx context.Context, out chan<- RawTrap, announce bool) (retErr error, panicked bool) {
+	tl := s.buildListener(ctx, out)
+
+	done := make(chan struct{})
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panicked = true
+				s.log.Warn("panic in snmp listen loop", "panic", r)
+			}
+			close(done)
+		}()
+		retErr = tl.Listen(s.bindAddr)
+	}()
 
 	versions := "v2c"
 	if len(s.v3users) > 0 {
 		versions = "v2c+v3"
 	}
 	select {
-	case err := <-errCh:
-		return fmt.Errorf("snmp: listen %s: %w", s.bindAddr, err)
+	case <-done:
+		// Exited (error or panic) before it was ready to listen.
+		if retErr != nil {
+			retErr = fmt.Errorf("snmp: listen %s: %w", s.bindAddr, retErr)
+		}
+		return retErr, panicked
 	case <-tl.Listening():
-		s.log.Info("snmp trap sink listening", "addr", s.bindAddr, "versions", versions)
+		if announce {
+			s.log.Info("snmp trap sink listening", "addr", s.bindAddr, "versions", versions)
+		}
 	case <-ctx.Done():
 		tl.Close()
-		return ctx.Err()
+		<-done
+		return nil, false
 	}
 
 	select {
 	case <-ctx.Done():
 		tl.Close()
-		<-errCh // let Listen unwind
-		s.log.Info("snmp trap sink stopped")
-		return nil
-	case err := <-errCh:
-		return fmt.Errorf("snmp: listener exited: %w", err)
+		<-done
+		return nil, false
+	case <-done:
+		if retErr != nil && !panicked {
+			retErr = fmt.Errorf("snmp: listener exited: %w", retErr)
+		}
+		return retErr, panicked
 	}
+}
+
+// buildListener constructs and configures a gosnmp TrapListener (v2c + optional
+// v3). It is safe to call repeatedly (on restart).
+func (s *Sink) buildListener(ctx context.Context, out chan<- RawTrap) *gosnmp.TrapListener {
+	tl := gosnmp.NewTrapListener()
+	tl.Params = gosnmp.Default
+	tl.OnNewTrap = s.handler(ctx, out)
+
+	// When debugging, route gosnmp's internal decode/USM logging to stderr. This
+	// surfaces why v3 packets are dropped (auth/decrypt failures happen inside
+	// gosnmp before OnNewTrap is ever called).
+	usmLogger := gosnmp.NewLogger(stdlog.New(io.Discard, "", 0))
+	if s.debug {
+		usmLogger = gosnmp.NewLogger(stdlog.New(os.Stderr, "gosnmp ", stdlog.Ltime))
+		tl.Params.Logger = usmLogger
+	}
+
+	// Configure SNMPv3 users (design §3.1). Invalid users are surfaced, never
+	// loaded as usable — noAuthNoPriv is rejected.
+	if len(s.v3users) > 0 {
+		table, errs := buildUSMTable(s.v3users, usmLogger)
+		for _, e := range errs {
+			s.log.Warn("snmpv3 user rejected", "err", e)
+		}
+		if table != nil {
+			tl.Params.TrapSecurityParametersTable = table
+			// gosnmp's testAuthentication requires the listener's Version to be
+			// Version3 to authenticate v3 packets; per-packet version detection
+			// still routes v2c through the community path on the same socket.
+			tl.Params.Version = gosnmp.Version3
+			// NB: do NOT set Params.SecurityModel = UserSecurityModel — gosnmp's
+			// listenUDP then runs an engine-ID block that dereferences the (nil)
+			// Params.SecurityParameters and panics; the table path authenticates
+			// without it.
+			s.log.Info("snmpv3 enabled", "users", len(s.v3users)-len(errs))
+		}
+	}
+	return tl
 }
 
 // handler returns the OnNewTrap callback. It is fully recover-guarded: gosnmp's
