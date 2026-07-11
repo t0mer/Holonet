@@ -12,6 +12,10 @@ import (
 	"syscall"
 	"time"
 
+	"net/http"
+
+	"github.com/t0mer/holonet/internal/api"
+	"github.com/t0mer/holonet/internal/auth"
 	"github.com/t0mer/holonet/internal/config"
 	"github.com/t0mer/holonet/internal/crypto"
 	"github.com/t0mer/holonet/internal/decode"
@@ -22,6 +26,7 @@ import (
 	"github.com/t0mer/holonet/internal/snmp"
 	"github.com/t0mer/holonet/internal/store"
 	"github.com/t0mer/holonet/internal/version"
+	"github.com/t0mer/holonet/internal/webui"
 )
 
 func main() {
@@ -64,7 +69,7 @@ func run(args []string) error {
 		return runAdmin(bs, st, sealer, log)
 	}
 
-	return runDaemon(st, sealer, log)
+	return runDaemon(bs, st, sealer, log)
 }
 
 // runAdmin performs the requested one-shot bootstrap action(s) and returns.
@@ -99,8 +104,9 @@ func runAdmin(bs config.Bootstrap, st *store.Store, sealer *crypto.Sealer, log *
 	return nil
 }
 
-// runDaemon starts the trap pipeline and blocks until a shutdown signal.
-func runDaemon(st *store.Store, sealer *crypto.Sealer, log *slog.Logger) error {
+// runDaemon starts the trap pipeline and the web/API server, blocking until a
+// shutdown signal.
+func runDaemon(bs config.Bootstrap, st *store.Store, sealer *crypto.Sealer, log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -120,15 +126,39 @@ func runDaemon(st *store.Store, sealer *crypto.Sealer, log *slog.Logger) error {
 
 	// Flood controller — config from settings, reloadable at runtime.
 	settings, _ := st.AllSettings()
-	floodCfg := flood.ParseConfig(settings)
 	var proc *pipeline.Processor
-	fc := flood.New(floodCfg, func(r flood.Rollup) { proc.FloodFlush(ctx)(r) })
+	fc := flood.New(flood.ParseConfig(settings), func(r flood.Rollup) { proc.FloodFlush(ctx)(r) })
 	proc = pipeline.New(st, decoder, engine, fc, dispatcher, log)
 	go fc.Start(ctx.Done(), time.Second, time.Now)
 	log.Info("flood control active", "strategy", fc.Strategy())
 
 	traps := make(chan snmp.RawTrap, 256)
 	go proc.Run(ctx, traps)
+
+	// Web/API server.
+	authMgr := auth.New(st, auth.SigningKeyFromMaster(bs.MasterKey), 24*time.Hour, false)
+	apiSrv := api.New(api.Deps{
+		Store:    st,
+		Sealer:   sealer,
+		Auth:     authMgr,
+		Dispatch: dispatcher,
+		Replay:   replayFunc(st, proc),
+		ReloadFlood: func() {
+			s, _ := st.AllSettings()
+			fc.Configure(flood.ParseConfig(s))
+			log.Info("flood control reconfigured", "strategy", fc.Strategy())
+		},
+		Version: version.Version,
+		SPA:     webui.DistFS(),
+	})
+	httpSrv := &http.Server{Addr: bs.HTTPAddr, Handler: apiSrv.Handler()}
+	go func() {
+		log.Info("web/api server listening", "addr", bs.HTTPAddr)
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("http server", "err", err)
+			stop()
+		}
+	}()
 
 	sink := snmp.NewV2CSink(bindAddr, allow, log, snmp.NopMetrics{})
 
@@ -144,13 +174,36 @@ func runDaemon(st *store.Store, sealer *crypto.Sealer, log *slog.Logger) error {
 			return err
 		}
 	}
-	// Give the sink a moment to unwind on graceful shutdown.
 	stop()
+	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = httpSrv.Shutdown(shutCtx)
 	select {
 	case <-errCh:
 	case <-time.After(2 * time.Second):
 	}
 	return nil
+}
+
+// replayFunc reconstructs a stored trap into a RawTrap and re-runs the pipeline,
+// returning the newly stored trap id (design §3.7 replay).
+func replayFunc(st *store.Store, proc *pipeline.Processor) api.Replayer {
+	return func(ctx context.Context, trapID int64) (int64, error) {
+		tv, err := st.GetTrap(trapID)
+		if err != nil {
+			return 0, err
+		}
+		var vbs []snmp.Varbind
+		_ = json.Unmarshal([]byte(tv.VarbindsJSON), &vbs)
+		raw := snmp.RawTrap{
+			ReceivedAt: time.Now(),
+			SourceIP:   tv.SourceIP,
+			Version:    tv.SNMPVersion,
+			TrapOID:    tv.TrapOID,
+			Varbinds:   vbs,
+		}
+		return proc.Process(ctx, raw)
+	}
 }
 
 // communityChecker loads and unseals the enabled v2c communities into a set and

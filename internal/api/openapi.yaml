@@ -1,0 +1,112 @@
+openapi: 3.0.3
+info:
+  title: HoloNet API
+  version: "1"
+  description: |
+    SNMP trap → messaging bridge. Every UI action maps to an endpoint here.
+
+    ## Authentication
+    Session cookie (`holonet_session`) issued by `/api/v1/auth/login` or
+    `/api/v1/auth/setup`. When `auth.enabled` is `false` (e.g. behind Cloudflare
+    Access) the API is open. First run: `/api/v1/auth/setup` creates the admin.
+
+    Sealed secrets (community strings, channel credentials) are write-only and
+    never returned in responses.
+servers:
+  - url: /
+paths:
+  /health:
+    get:
+      summary: Liveness + version
+      security: []
+      responses: { "200": { description: OK } }
+  /api/v1/auth/status:
+    get:
+      summary: Auth status (configured / enabled / authenticated)
+      security: []
+      responses: { "200": { description: OK } }
+  /api/v1/auth/setup:
+    post:
+      summary: First-run admin setup
+      security: []
+      responses: { "201": { description: Created }, "409": { description: Already configured } }
+  /api/v1/auth/login:
+    post:
+      summary: Log in
+      security: []
+      responses: { "200": { description: OK }, "401": { description: Invalid } }
+  /api/v1/auth/logout:
+    post: { summary: Log out, responses: { "200": { description: OK } } }
+  /api/v1/settings:
+    get: { summary: List settings, responses: { "200": { description: OK } } }
+    put: { summary: Update settings (key/value map), responses: { "200": { description: OK } } }
+  /api/v1/dashboard:
+    get: { summary: Dashboard counters, responses: { "200": { description: OK } } }
+  /api/v1/severities:
+    get: { summary: List severity levels, responses: { "200": { description: OK } } }
+    post: { summary: Create custom severity, responses: { "201": { description: Created } } }
+  /api/v1/severities/{id}:
+    put: { summary: Update severity, responses: { "200": { description: OK } } }
+    delete: { summary: Delete custom severity, responses: { "204": { description: Deleted } } }
+  /api/v1/oidmap:
+    get: { summary: List OID map, responses: { "200": { description: OK } } }
+    post: { summary: Create/upsert OID entry, responses: { "201": { description: Created } } }
+  /api/v1/oidmap/{id}:
+    put: { summary: Update OID entry, responses: { "200": { description: OK } } }
+    delete: { summary: Delete OID entry, responses: { "204": { description: Deleted } } }
+  /api/v1/devices:
+    get: { summary: List devices, responses: { "200": { description: OK } } }
+    post: { summary: Create device, responses: { "201": { description: Created } } }
+  /api/v1/devices/{id}:
+    put: { summary: Update device, responses: { "200": { description: OK } } }
+    delete: { summary: Delete device, responses: { "204": { description: Deleted } } }
+  /api/v1/channels:
+    get: { summary: List channels (secrets omitted), responses: { "200": { description: OK } } }
+    post: { summary: Create channel (config sealed at rest), responses: { "201": { description: Created } } }
+  /api/v1/channels/{id}:
+    put: { summary: Update channel (empty config preserves secret), responses: { "200": { description: OK } } }
+    delete: { summary: Delete channel, responses: { "204": { description: Deleted } } }
+  /api/v1/rules:
+    get: { summary: List rules (ordered), responses: { "200": { description: OK } } }
+    post: { summary: Create rule, responses: { "201": { description: Created } } }
+  /api/v1/rules/reorder:
+    put: { summary: Reorder rules by id list, responses: { "200": { description: OK } } }
+  /api/v1/rules/{id}:
+    put: { summary: Update rule, responses: { "200": { description: OK } } }
+    delete: { summary: Delete rule, responses: { "204": { description: Deleted } } }
+  /api/v1/routes:
+    get: { summary: List default routes (severity → channels), responses: { "200": { description: OK } } }
+  /api/v1/routes/{severityID}:
+    put: { summary: Set default routes for a severity, responses: { "200": { description: OK } } }
+  /api/v1/sinks/communities:
+    get: { summary: List v2c communities (sealed), responses: { "200": { description: OK } } }
+    post: { summary: Add v2c community, responses: { "201": { description: Created } } }
+  /api/v1/sinks/communities/{id}:
+    put: { summary: Toggle community, responses: { "200": { description: OK } } }
+    delete: { summary: Delete community, responses: { "204": { description: Deleted } } }
+  /api/v1/traps:
+    get:
+      summary: List traps (Events tab)
+      parameters:
+        - { name: sort, in: query, schema: { type: string, enum: [received_at, source_ip, resolved_name, severity, matched_rule, status, id] } }
+        - { name: order, in: query, schema: { type: string, enum: [asc, desc] } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses: { "200": { description: OK } }
+  /api/v1/traps/{id}:
+    get: { summary: Get one trap, responses: { "200": { description: OK }, "404": { description: Not found } } }
+  /api/v1/traps/{id}/notifications:
+    get: { summary: Dispatch attempts for a trap, responses: { "200": { description: OK } } }
+  /api/v1/replay/{id}:
+    post: { summary: Re-run routing for a stored trap, responses: { "200": { description: OK } } }
+  /api/v1/test/{id}:
+    post: { summary: Send a test message via a saved channel, responses: { "200": { description: Sent } } }
+  /api/v1/test:
+    post: { summary: Send a test message via unsaved values, responses: { "200": { description: Sent } } }
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: holonet_session
+security:
+  - cookieAuth: []
