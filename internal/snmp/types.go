@@ -24,9 +24,9 @@ type Varbind struct {
 type RawTrap struct {
 	ReceivedAt time.Time
 	SourceIP   string
-	Version    string    // v2c | v3
-	Community  string     // v2c community (plaintext, in-memory only)
-	User       string     // v3 USM user name
+	Version    string // v2c | v3
+	Community  string // v2c community (plaintext, in-memory only)
+	User       string // v3 USM user name
 	TrapOID    string
 	Varbinds   []Varbind
 }
