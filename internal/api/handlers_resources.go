@@ -57,6 +57,12 @@ func (s *Server) mountResources(r chi.Router) {
 	r.Put("/sinks/communities/{id}", s.updateCommunity)
 	r.Delete("/sinks/communities/{id}", s.deleteCommunity)
 
+	// Sinks (SNMPv3 users)
+	r.Get("/sinks/v3users", s.listV3Users)
+	r.Post("/sinks/v3users", s.createV3User)
+	r.Put("/sinks/v3users/{id}", s.updateV3User)
+	r.Delete("/sinks/v3users/{id}", s.deleteV3User)
+
 	// Traps + notifications + actions
 	r.Get("/traps", s.listTraps)
 	r.Get("/traps/{id}", s.getTrap)
@@ -77,11 +83,31 @@ func (s *Server) listSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, m)
 }
 
+// writableSettings is the allow-list of keys the settings API may change. This
+// keeps arbitrary keys out of the store; disabling auth via auth.enabled is a
+// documented, auth-gated feature (design §5), not an unbounded write.
+var writableSettings = map[string]bool{
+	"snmp.bind_addr":              true,
+	"flood.strategy":              true,
+	"flood.dedupe_window":         true,
+	"flood.rate_n":                true,
+	"flood.rate_window":           true,
+	"flood.digest_interval":       true,
+	"unknown_default_severity_id": true,
+	"auth.enabled":                true,
+}
+
 func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	var kv map[string]string
 	if err := decodeJSON(r, &kv); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
+	}
+	for k := range kv {
+		if !writableSettings[k] {
+			writeErr(w, http.StatusBadRequest, "unknown setting key: "+k)
+			return
+		}
 	}
 	for k, v := range kv {
 		if err := s.deps.Store.SetSetting(k, v); err != nil {

@@ -136,7 +136,7 @@ func runDaemon(bs config.Bootstrap, st *store.Store, sealer *crypto.Sealer, log 
 	go proc.Run(ctx, traps)
 
 	// Web/API server.
-	authMgr := auth.New(st, auth.SigningKeyFromMaster(bs.MasterKey), 24*time.Hour, false)
+	authMgr := auth.New(st, auth.SigningKeyFromMaster(bs.MasterKey), 24*time.Hour, bs.SecureCookies)
 	apiSrv := api.New(api.Deps{
 		Store:    st,
 		Sealer:   sealer,
@@ -160,7 +160,13 @@ func runDaemon(bs config.Bootstrap, st *store.Store, sealer *crypto.Sealer, log 
 		}
 	}()
 
-	sink := snmp.NewV2CSink(bindAddr, allow, log, snmp.NopMetrics{})
+	sink := snmp.NewSink(snmp.Config{
+		BindAddr:       bindAddr,
+		AllowCommunity: allow,
+		V3Users:        v3Users(st, sealer, log),
+		Log:            log,
+		Metrics:        snmp.NopMetrics{},
+	})
 
 	log.Info("holonet starting", "version", version.Version, "bind", bindAddr)
 	errCh := make(chan error, 1)
@@ -229,6 +235,42 @@ func communityChecker(st *store.Store, sealer *crypto.Sealer, log *slog.Logger) 
 		_, ok := set[community]
 		return ok
 	}, nil
+}
+
+// v3Users loads and unseals the enabled SNMPv3 users into USM credentials for
+// the sink. Passwords live only in memory. Users that fail to unseal (wrong
+// master key) are skipped with a warning.
+func v3Users(st *store.Store, sealer *crypto.Sealer, log *slog.Logger) []snmp.USMUser {
+	rows, err := st.ListEnabledV3Users()
+	if err != nil {
+		log.Warn("loading v3 users", "err", err)
+		return nil
+	}
+	out := make([]snmp.USMUser, 0, len(rows))
+	for _, u := range rows {
+		authPass, err := sealer.OpenString(u.AuthPassSealed)
+		if err != nil {
+			log.Warn("skipping v3 user that failed to unseal (wrong master key?)", "id", u.ID)
+			continue
+		}
+		privPass := ""
+		if u.PrivPassSealed != "" {
+			if privPass, err = sealer.OpenString(u.PrivPassSealed); err != nil {
+				log.Warn("skipping v3 user with unreadable privacy password", "id", u.ID)
+				continue
+			}
+		}
+		out = append(out, snmp.USMUser{
+			Username:      u.Username,
+			SecurityLevel: u.SecurityLevel,
+			AuthProtocol:  u.AuthProtocol,
+			AuthPass:      authPass,
+			PrivProtocol:  u.PrivProtocol,
+			PrivPass:      privPass,
+			EngineID:      u.EngineID,
+		})
+	}
+	return out
 }
 
 // newLogger builds a slog logger at the requested level.

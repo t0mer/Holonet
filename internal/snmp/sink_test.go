@@ -32,7 +32,7 @@ func v2cPacket(community string) *gosnmp.SnmpPacket {
 func addr() *net.UDPAddr { return &net.UDPAddr{IP: net.ParseIP("192.0.2.5"), Port: 1162} }
 
 func TestToRawTrap(t *testing.T) {
-	rt := toRawTrap(v2cPacket("public"), addr())
+	rt := toRawTrap(v2cPacket("public"), addr(), "v2c")
 	if rt.Version != "v2c" || rt.Community != "public" {
 		t.Fatalf("unexpected header: %+v", rt)
 	}
@@ -88,15 +88,21 @@ func TestHandlerDropsUnknownCommunity(t *testing.T) {
 	}
 }
 
-func TestHandlerIgnoresNonV2c(t *testing.T) {
+func TestHandlerEmitsAuthenticatedV3(t *testing.T) {
 	m := &countMetrics{}
 	s := NewV2CSink("", func(string) bool { return true }, nil, m)
 	out := make(chan RawTrap, 1)
-	pkt := v2cPacket("public")
+	pkt := v2cPacket("public") // reuse varbinds
 	pkt.Version = gosnmp.Version3
+	pkt.SecurityParameters = &gosnmp.UsmSecurityParameters{UserName: "sfvhuser"}
 	s.handler(context.Background(), out)(pkt, addr())
-	if len(out) != 0 {
-		t.Error("v3 packet must be ignored in slice 1")
+	select {
+	case rt := <-out:
+		if rt.Version != "v3" || rt.User != "sfvhuser" {
+			t.Errorf("v3 trap = %+v", rt)
+		}
+	default:
+		t.Fatal("authenticated v3 trap should be emitted")
 	}
 }
 

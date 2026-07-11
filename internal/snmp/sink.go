@@ -17,8 +17,7 @@ type TrapSink interface {
 	Start(ctx context.Context, out chan<- RawTrap) error
 }
 
-// Metrics is the counter surface the sink needs. The prometheus-backed
-// implementation lands in Slice 3; a no-op is used until then.
+// Metrics is the counter surface the sink needs.
 type Metrics interface {
 	TrapReceived(version, source string)
 	AuthFailure()
@@ -32,42 +31,83 @@ func (NopMetrics) TrapReceived(string, string) {}
 func (NopMetrics) AuthFailure()                {}
 func (NopMetrics) DecodePanic()                {}
 
-// V2CSink is an SNMPv2c trap listener built on gosnmp's TrapListener.
-type V2CSink struct {
+// Config configures a Sink. One listener bound to BindAddr serves v2c and v3 on
+// the same UDP socket (the version is detected per packet).
+type Config struct {
+	BindAddr       string
+	AllowCommunity func(community string) bool // v2c acceptance predicate
+	V3Users        []USMUser                   // enabled SNMPv3 USM users
+	Log            *slog.Logger
+	Metrics        Metrics
+}
+
+// Sink is an SNMP trap listener built on gosnmp's TrapListener, serving v2c and
+// (when V3 users are configured) v3.
+type Sink struct {
 	bindAddr string
 	allow    func(community string) bool
+	v3users  []USMUser
 	log      *slog.Logger
 	metrics  Metrics
 }
 
-// NewV2CSink builds a v2c sink. allow reports whether a community string is
-// accepted; unknown communities are counted and dropped.
-func NewV2CSink(bindAddr string, allow func(string) bool, log *slog.Logger, m Metrics) *V2CSink {
+// NewSink builds a Sink from Config.
+func NewSink(cfg Config) *Sink {
+	log := cfg.Log
 	if log == nil {
 		log = slog.Default()
 	}
+	m := cfg.Metrics
 	if m == nil {
 		m = NopMetrics{}
 	}
-	return &V2CSink{bindAddr: bindAddr, allow: allow, log: log, metrics: m}
+	return &Sink{
+		bindAddr: cfg.BindAddr,
+		allow:    cfg.AllowCommunity,
+		v3users:  cfg.V3Users,
+		log:      log,
+		metrics:  m,
+	}
+}
+
+// NewV2CSink builds a v2c-only sink (used by Slice 1 and tests).
+func NewV2CSink(bindAddr string, allow func(string) bool, log *slog.Logger, m Metrics) *Sink {
+	return NewSink(Config{BindAddr: bindAddr, AllowCommunity: allow, Log: log, Metrics: m})
 }
 
 // Start binds the listener and blocks, feeding decoded traps to out until ctx
 // is cancelled (graceful shutdown) or the listener errors.
-func (s *V2CSink) Start(ctx context.Context, out chan<- RawTrap) error {
+func (s *Sink) Start(ctx context.Context, out chan<- RawTrap) error {
 	tl := gosnmp.NewTrapListener()
 	tl.Params = gosnmp.Default
 	tl.OnNewTrap = s.handler(ctx, out)
 
+	// Configure SNMPv3 users (design §3.1). Invalid users are surfaced, never
+	// loaded as usable — noAuthNoPriv is rejected.
+	if len(s.v3users) > 0 {
+		table, errs := buildUSMTable(s.v3users)
+		for _, e := range errs {
+			s.log.Warn("snmpv3 user rejected", "err", e)
+		}
+		if table != nil {
+			tl.Params.TrapSecurityParametersTable = table
+			tl.Params.SecurityModel = gosnmp.UserSecurityModel
+			s.log.Info("snmpv3 enabled", "users", len(s.v3users)-len(errs))
+		}
+	}
+
 	errCh := make(chan error, 1)
 	go func() { errCh <- tl.Listen(s.bindAddr) }()
 
-	// Wait until listening, or fail fast if the bind errors.
+	versions := "v2c"
+	if len(s.v3users) > 0 {
+		versions = "v2c+v3"
+	}
 	select {
 	case err := <-errCh:
 		return fmt.Errorf("snmp: listen %s: %w", s.bindAddr, err)
 	case <-tl.Listening():
-		s.log.Info("snmp trap sink listening", "addr", s.bindAddr, "versions", "v2c")
+		s.log.Info("snmp trap sink listening", "addr", s.bindAddr, "versions", versions)
 	case <-ctx.Done():
 		tl.Close()
 		return ctx.Err()
@@ -85,9 +125,9 @@ func (s *V2CSink) Start(ctx context.Context, out chan<- RawTrap) error {
 }
 
 // handler returns the OnNewTrap callback. It is fully recover-guarded: gosnmp's
-// trap path has a documented history of panics on malformed packets, and a
-// panic here must never crash the process (design §3.1).
-func (s *V2CSink) handler(ctx context.Context, out chan<- RawTrap) gosnmp.TrapHandlerFunc {
+// v3 trap path has a documented history of panics on malformed/mismatched
+// packets, and a panic here must never crash the process (design §3.1).
+func (s *Sink) handler(ctx context.Context, out chan<- RawTrap) gosnmp.TrapHandlerFunc {
 	return func(pkt *gosnmp.SnmpPacket, addr *net.UDPAddr) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -99,28 +139,34 @@ func (s *V2CSink) handler(ctx context.Context, out chan<- RawTrap) gosnmp.TrapHa
 		if pkt == nil {
 			return
 		}
-		// Slice 1 handles v2c only; v3 is wired in Slice 3.
-		if pkt.Version != gosnmp.Version2c {
-			s.log.Debug("ignoring non-v2c trap", "version", pkt.Version.String(), "source", hostOf(addr))
-			return
-		}
-		if s.allow != nil && !s.allow(pkt.Community) {
-			s.metrics.AuthFailure()
-			s.log.Warn("dropping trap with unknown community", "source", hostOf(addr))
-			return
-		}
-
-		rt := toRawTrap(pkt, addr)
-		s.metrics.TrapReceived("v2c", rt.SourceIP)
-		select {
-		case out <- rt:
-		case <-ctx.Done():
+		switch pkt.Version {
+		case gosnmp.Version2c:
+			if s.allow != nil && !s.allow(pkt.Community) {
+				s.metrics.AuthFailure()
+				s.log.Warn("dropping v2c trap with unknown community", "source", hostOf(addr))
+				return
+			}
+			s.emit(ctx, out, toRawTrap(pkt, addr, "v2c"))
+		case gosnmp.Version3:
+			// Reaching here means gosnmp already authenticated (and decrypted)
+			// the packet against a configured USM user.
+			s.emit(ctx, out, toRawTrap(pkt, addr, "v3"))
+		default:
+			s.log.Debug("ignoring unsupported trap version", "version", pkt.Version.String(), "source", hostOf(addr))
 		}
 	}
 }
 
-// toRawTrap normalizes a gosnmp packet into a RawTrap.
-func toRawTrap(pkt *gosnmp.SnmpPacket, addr *net.UDPAddr) RawTrap {
+func (s *Sink) emit(ctx context.Context, out chan<- RawTrap, rt RawTrap) {
+	s.metrics.TrapReceived(rt.Version, rt.SourceIP)
+	select {
+	case out <- rt:
+	case <-ctx.Done():
+	}
+}
+
+// toRawTrap normalizes a gosnmp packet into a RawTrap for the given version.
+func toRawTrap(pkt *gosnmp.SnmpPacket, addr *net.UDPAddr, version string) RawTrap {
 	vbs := make([]Varbind, 0, len(pkt.Variables))
 	trapOID := ""
 	for _, pdu := range pkt.Variables {
@@ -133,14 +179,21 @@ func toRawTrap(pkt *gosnmp.SnmpPacket, addr *net.UDPAddr) RawTrap {
 		}
 		vbs = append(vbs, vb)
 	}
-	return RawTrap{
+	rt := RawTrap{
 		ReceivedAt: time.Now(),
 		SourceIP:   hostOf(addr),
-		Version:    "v2c",
-		Community:  pkt.Community,
+		Version:    version,
 		TrapOID:    trapOID,
 		Varbinds:   vbs,
 	}
+	if version == "v3" {
+		if usm, ok := pkt.SecurityParameters.(*gosnmp.UsmSecurityParameters); ok && usm != nil {
+			rt.User = usm.UserName
+		}
+	} else {
+		rt.Community = pkt.Community
+	}
+	return rt
 }
 
 // normalizeValue converts gosnmp's raw values into template-friendly forms:

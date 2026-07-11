@@ -66,6 +66,20 @@ type Notification struct {
 	SentAt    *time.Time `json:"sent_at"`
 }
 
+// SNMPv3User is a USM credential set (design §3.6). Passwords are sealed at
+// rest and never serialized to API responses.
+type SNMPv3User struct {
+	ID             int64  `json:"id"`
+	Username       string `json:"username"`
+	SecurityLevel  string `json:"security_level"` // authNoPriv | authPriv
+	AuthProtocol   string `json:"auth_protocol"`
+	AuthPassSealed string `json:"-"`
+	PrivProtocol   string `json:"priv_protocol"`
+	PrivPassSealed string `json:"-"`
+	EngineID       string `json:"engine_id"`
+	Enabled        bool   `json:"enabled"`
+}
+
 // Device is a known trap source (design §3.6).
 type Device struct {
 	ID       int64  `json:"id"`
