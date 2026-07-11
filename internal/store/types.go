@@ -65,3 +65,36 @@ type Notification struct {
 	LastError string     `json:"last_error"`
 	SentAt    *time.Time `json:"sent_at"`
 }
+
+// Device is a known trap source (design §3.6).
+type Device struct {
+	ID       int64  `json:"id"`
+	SourceIP string `json:"source_ip"`
+	Name     string `json:"name"`
+	Enabled  bool   `json:"enabled"`
+}
+
+// Rule is an ordered classification/routing rule (design §3.3).
+type Rule struct {
+	ID                 int64   `json:"id"`
+	Ord                int     `json:"ord"`
+	Name               string  `json:"name"`
+	Enabled            bool    `json:"enabled"`
+	ContinueOnMatch    bool    `json:"continue_on_match"`
+	BypassFloodControl bool    `json:"bypass_flood_control"`
+	MatchDeviceID      *int64  `json:"match_device_id"`
+	MatchOIDGlob       string  `json:"match_oid_glob"`
+	MatchVarbindRegex  *string `json:"match_varbind_regex"`
+	SeverityID         *int64  `json:"severity_id"`
+	ChannelIDs         []int64 `json:"channel_ids"`
+}
+
+// TrapView is a trap enriched with joined display fields for the Events tab.
+type TrapView struct {
+	Trap
+	SeverityName  *string `json:"severity_name"`
+	SeverityColor *string `json:"severity_color"`
+	SeverityEmoji *string `json:"severity_emoji"`
+	DeviceName    *string `json:"device_name"`
+	MatchedRule   *string `json:"matched_rule_name"`
+}
