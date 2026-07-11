@@ -20,6 +20,7 @@ import (
 	"github.com/t0mer/holonet/internal/crypto"
 	"github.com/t0mer/holonet/internal/decode"
 	"github.com/t0mer/holonet/internal/flood"
+	"github.com/t0mer/holonet/internal/metrics"
 	"github.com/t0mer/holonet/internal/notify"
 	"github.com/t0mer/holonet/internal/pipeline"
 	"github.com/t0mer/holonet/internal/rules"
@@ -120,6 +121,8 @@ func runDaemon(bs config.Bootstrap, st *store.Store, sealer *crypto.Sealer, log 
 		bindAddr = "0.0.0.0:1162"
 	}
 
+	met := metrics.New()
+
 	decoder := decode.New(st)
 	engine := rules.New(st)
 	dispatcher := notify.NewDispatcher(sealer, 10*time.Second, 2)
@@ -129,6 +132,10 @@ func runDaemon(bs config.Bootstrap, st *store.Store, sealer *crypto.Sealer, log 
 	var proc *pipeline.Processor
 	fc := flood.New(flood.ParseConfig(settings), func(r flood.Rollup) { proc.FloodFlush(ctx)(r) })
 	proc = pipeline.New(st, decoder, engine, fc, dispatcher, log)
+	proc.SetMetrics(met)
+	if chans, err := st.ListEnabledChannels(); err == nil {
+		met.SetActiveChannels(len(chans))
+	}
 	go fc.Start(ctx.Done(), time.Second, time.Now)
 	log.Info("flood control active", "strategy", fc.Strategy())
 
@@ -148,6 +155,7 @@ func runDaemon(bs config.Bootstrap, st *store.Store, sealer *crypto.Sealer, log 
 			fc.Configure(flood.ParseConfig(s))
 			log.Info("flood control reconfigured", "strategy", fc.Strategy())
 		},
+		Metrics: met.Handler(),
 		Version: version.Version,
 		SPA:     webui.DistFS(),
 	})
@@ -165,7 +173,7 @@ func runDaemon(bs config.Bootstrap, st *store.Store, sealer *crypto.Sealer, log 
 		AllowCommunity: allow,
 		V3Users:        v3Users(st, sealer, log),
 		Log:            log,
-		Metrics:        snmp.NopMetrics{},
+		Metrics:        met,
 	})
 
 	log.Info("holonet starting", "version", version.Version, "bind", bindAddr)

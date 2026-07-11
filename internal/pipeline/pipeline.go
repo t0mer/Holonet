@@ -16,6 +16,12 @@ import (
 	"github.com/t0mer/holonet/internal/store"
 )
 
+// Metrics is the optional counter surface the pipeline reports to.
+type Metrics interface {
+	TrapSuppressed(strategy string)
+	NotificationRecorded(channelID int64, status string)
+}
+
 // Processor consumes RawTraps, classifies and flood-gates them, dispatches
 // notifications, and persists the results.
 type Processor struct {
@@ -25,7 +31,11 @@ type Processor struct {
 	flood      *flood.Controller
 	dispatcher *notify.Dispatcher
 	log        *slog.Logger
+	metrics    Metrics
 }
+
+// SetMetrics attaches a metrics sink (optional).
+func (p *Processor) SetMetrics(m Metrics) { p.metrics = m }
 
 // New builds a Processor.
 func New(s *store.Store, d *decode.Decoder, eng *rules.Engine, fc *flood.Controller, disp *notify.Dispatcher, log *slog.Logger) *Processor {
@@ -86,8 +96,14 @@ func (p *Processor) Process(ctx context.Context, raw snmp.RawTrap) (int64, error
 
 	switch outcome {
 	case flood.Suppress:
+		if p.metrics != nil {
+			p.metrics.TrapSuppressed(p.flood.Strategy())
+		}
 		return trapID, nil // deduped: stored + counted, not notified
 	case flood.Hold:
+		if p.metrics != nil {
+			p.metrics.TrapSuppressed(p.flood.Strategy())
+		}
 		p.recordHeld(trapID)
 		return trapID, nil // represented later in a rollup
 	}
@@ -162,6 +178,9 @@ func (p *Processor) recordNotification(trapID int64, r notify.Result) {
 	}
 	if _, err := p.store.InsertNotification(n); err != nil {
 		p.log.Error("recording notification", "trap_id", trapID, "err", err)
+	}
+	if p.metrics != nil {
+		p.metrics.NotificationRecorded(chID, r.Status)
 	}
 }
 

@@ -34,6 +34,7 @@ type Deps struct {
 	Dispatch    *notify.Dispatcher
 	Replay      Replayer
 	ReloadFlood FloodReloader
+	Metrics     http.Handler // Prometheus /metrics handler (optional)
 	Version     string
 	SPA         fs.FS
 }
@@ -54,6 +55,9 @@ func New(deps Deps) *Server {
 	r.Get("/health", s.handleHealth)
 	r.Get("/api/openapi.yaml", s.handleOpenAPI)
 	r.Get("/api/docs", s.handleDocs)
+	if deps.Metrics != nil {
+		r.Handle("/metrics", deps.Metrics)
+	}
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public auth endpoints.
