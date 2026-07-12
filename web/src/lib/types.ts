@@ -148,4 +148,4 @@ export interface WebhookConfig {
   body_template?: string
 }
 
-export type ChannelKind = 'shoutrrr' | 'whatsapp' | 'webhook'
+export type ChannelKind = 'shoutrrr' | 'whatsapp' | 'greenapi' | 'webhook'

@@ -4,7 +4,8 @@
 traps from network devices (initial target: **Sophos SFVH / SFOS**), classifies
 each event into a priority level via a user-editable rule engine, applies flood
 control, and dispatches notifications to configurable channels — Telegram,
-WhatsApp, generic webhooks, and anything
+WhatsApp (self-hosted gateway or the [GreenAPI](https://green-api.com) cloud),
+generic webhooks, and anything
 [Shoutrrr](https://github.com/containrrr/shoutrrr) supports.
 
 Single Go binary, embedded React console, pure-Go SQLite, `FROM scratch` image.
@@ -26,8 +27,10 @@ Single Go binary, embedded React console, pure-Go SQLite, `FROM scratch` image.
   `bypass_flood_control` so Critical always sends.
 - **Flood control** — `none`, `dedupe`, `rate_limit` (with a "+K more" summary),
   and `digest` (grouped rollups), switchable at runtime.
-- **Notifications** — Shoutrrr (Telegram, Discord, Slack, ntfy, …), a self-hosted
-  WhatsApp gateway, and generic webhooks. Best-effort, concurrent, with retries.
+- **Notifications** — Shoutrrr (Telegram, Discord, Slack, ntfy, …), WhatsApp via
+  a self-hosted gateway **or the GreenAPI cloud**, and generic webhooks.
+  Best-effort, concurrent, with retries. Channels are chosen per rule (with a
+  per-severity default-route fallback).
 - **Secrets sealed at rest** — every community string, v3 password, and channel
   credential is AES-256-GCM encrypted with a boot-time master key. Nothing
   sensitive is ever returned by the API or written in plaintext.
@@ -54,6 +57,12 @@ Click any row for the decoded varbinds, per-channel dispatch status, and a
 Drag to reorder; **Test** dry-runs a sample event so you can see which rule wins
 and where it routes before saving.
 
+Each rule can route to its **own set of channels** — select any combination of
+channels on the rule, and a matching event is dispatched only to those. Leave a
+rule's channels empty to fall back to the per-severity **default routes**. This
+lets you, say, send Critical firewall events to on-call WhatsApp while everything
+else goes to a Telegram ops room.
+
 ![Rules](assets/screenshots/rules.png)
 ![Test a rule](assets/screenshots/rule-test.png)
 
@@ -61,8 +70,16 @@ Unmapped OIDs can be named on the spot from the Events drawer:
 
 ![Map an OID](assets/screenshots/oid-quickmap.png)
 
-### Channels — Shoutrrr / WhatsApp / webhook, with a real Send test
+### Channels — Shoutrrr / WhatsApp / GreenAPI / webhook, with a real Send test
 ![Channels](assets/screenshots/channels.png)
+
+WhatsApp can be delivered through the [GreenAPI](https://green-api.com) cloud —
+enter the Instance ID, API token, and recipient phone (international format,
+digits only; a JID works too). Leave **API URL** blank for `api.green-api.com`,
+or set your cluster URL (e.g. `https://7103.api.greenapi.com`) if the console
+shows one.
+
+![Add a GreenAPI WhatsApp channel](assets/screenshots/channel-greenapi.png)
 
 ### OID Map, Severities, Sinks, Settings
 ![OID Map](assets/screenshots/oidmap.png)
@@ -92,7 +109,7 @@ Trap Sink (v2c + v3) → Decoder (OID→event) → Rule Engine (severity + route
                                                      │
               ┌──────────────┬─────────────────┬─────┘
               ▼              ▼                 ▼
-        Shoutrrr        WhatsApp           Webhook        → dispatch log
+     Shoutrrr / WhatsApp / GreenAPI / Webhook            → dispatch log
               └────────────── SQLite (traps, notifications, config) ──────────────┘
                                      │
                             chi API ◀▶ embedded React SPA   ·   /metrics (Prometheus)

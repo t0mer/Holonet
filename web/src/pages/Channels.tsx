@@ -18,12 +18,14 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 const KIND_LABELS: Record<ChannelKind, string> = {
   shoutrrr: 'Shoutrrr',
   whatsapp: 'WhatsApp',
+  greenapi: 'GreenAPI (WhatsApp Cloud)',
   webhook: 'Webhook',
 }
 
 const KIND_HINTS: Record<ChannelKind, string> = {
   shoutrrr: 'Telegram, Discord, Slack, ntfy, email, and more via one URL',
   whatsapp: 'go-whatsapp-web-multidevice gateway',
+  greenapi: 'WhatsApp Cloud via the GreenAPI service',
   webhook: 'Generic HTTP POST with your own body',
 }
 
@@ -166,6 +168,10 @@ function ChannelDialog({ channel, onClose }: { channel: Channel | null; onClose:
   const [waUser, setWaUser] = useState('')
   const [waPass, setWaPass] = useState('')
   const [waToken, setWaToken] = useState('')
+  const [gaInstance, setGaInstance] = useState('')
+  const [gaToken, setGaToken] = useState('')
+  const [gaRecipient, setGaRecipient] = useState('')
+  const [gaApiUrl, setGaApiUrl] = useState('')
   const [hookUrl, setHookUrl] = useState('')
   const [hookHeaders, setHookHeaders] = useState<WebhookHeader[]>([])
   const [hookBody, setHookBody] = useState('')
@@ -187,6 +193,18 @@ function ChannelDialog({ channel, onClose }: { channel: Channel | null; onClose:
       if (waUser.trim()) cfg.username = waUser.trim()
       if (waPass) cfg.password = waPass
       if (waToken.trim()) cfg.token = waToken.trim()
+      return cfg
+    }
+    if (kind === 'greenapi') {
+      // On edit, the token is write-only: blank means keep the sealed value, so
+      // don't force a rebuild just because it's empty.
+      if (!gaInstance.trim() && !gaRecipient.trim() && !gaToken.trim()) return null
+      const cfg: Record<string, unknown> = {
+        instance_id: gaInstance.trim(),
+        recipient: gaRecipient.trim(),
+      }
+      if (gaToken.trim()) cfg.token = gaToken.trim()
+      if (gaApiUrl.trim()) cfg.api_url = gaApiUrl.trim()
       return cfg
     }
     // webhook
@@ -307,6 +325,23 @@ function ChannelDialog({ channel, onClose }: { channel: Channel | null; onClose:
             </div>
             <Field label="Bearer token" hint={isEdit ? 'blank = keep' : 'optional'}>
               <Input type="password" value={waToken} onChange={(e) => setWaToken(e.target.value)} autoComplete="new-password" />
+            </Field>
+          </div>
+        )}
+
+        {kind === 'greenapi' && (
+          <div className="space-y-4">
+            <Field label="Instance ID">
+              <Input value={gaInstance} onChange={(e) => setGaInstance(e.target.value)} className="font-mono" placeholder="7103xxxxxx" />
+            </Field>
+            <Field label="API token" hint={isEdit ? 'blank = keep' : undefined}>
+              <Input type="password" value={gaToken} onChange={(e) => setGaToken(e.target.value)} autoComplete="new-password" placeholder="copy from the GreenAPI console" />
+            </Field>
+            <Field label="Recipient phone" hint="international format, digits only — no + or spaces (e.g. 972501234567); or a JID">
+              <Input value={gaRecipient} onChange={(e) => setGaRecipient(e.target.value)} className="font-mono" placeholder="972501234567" />
+            </Field>
+            <Field label="API URL" hint="optional; blank = https://api.green-api.com — set your cluster URL if the console shows one">
+              <Input value={gaApiUrl} onChange={(e) => setGaApiUrl(e.target.value)} className="font-mono" placeholder="https://7103.api.greenapi.com" />
             </Field>
           </div>
         )}
