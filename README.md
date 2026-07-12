@@ -57,6 +57,12 @@ Click any row for the decoded varbinds, per-channel dispatch status, and a
 Drag to reorder; **Test** dry-runs a sample event so you can see which rule wins
 and where it routes before saving.
 
+Each rule can route to its **own set of channels** — select any combination of
+channels on the rule, and a matching event is dispatched only to those. Leave a
+rule's channels empty to fall back to the per-severity **default routes**. This
+lets you, say, send Critical firewall events to on-call WhatsApp while everything
+else goes to a Telegram ops room.
+
 ![Rules](assets/screenshots/rules.png)
 ![Test a rule](assets/screenshots/rule-test.png)
 
