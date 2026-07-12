@@ -116,6 +116,8 @@ func BuildNotifier(kind, configJSON string) (Notifier, error) {
 		return NewShoutrrr(configJSON)
 	case KindWhatsApp:
 		return NewWhatsApp(configJSON)
+	case KindGreenAPI:
+		return NewGreenAPI(configJSON)
 	case KindWebhook:
 		return NewWebhook(configJSON)
 	default:

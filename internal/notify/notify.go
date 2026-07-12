@@ -12,6 +12,7 @@ import (
 const (
 	KindShoutrrr = "shoutrrr"
 	KindWhatsApp = "whatsapp"
+	KindGreenAPI = "greenapi"
 	KindWebhook  = "webhook"
 )
 
