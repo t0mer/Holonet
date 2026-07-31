@@ -10,7 +10,7 @@ generic webhooks, and anything
 
 Single Go binary, embedded React console, pure-Go SQLite, `FROM scratch` image.
 
-![Dashboard](assets/screenshots/dashboard.png)
+![Dashboard](https://raw.githubusercontent.com/t0mer/Holonet/main/assets/screenshots/dashboard.png)
 
 ---
 
@@ -46,12 +46,12 @@ Single Go binary, embedded React console, pure-Go SQLite, `FROM scratch` image.
 ## Screenshots
 
 ### Events — sortable, severity-coded, per-rule routing
-![Events](assets/screenshots/events.png)
+![Events](https://raw.githubusercontent.com/t0mer/Holonet/main/assets/screenshots/events.png)
 
 Click any row for the decoded varbinds, per-channel dispatch status, and a
 **Replay routing** action that re-runs the rules against a stored trap.
 
-![Event detail](assets/screenshots/event-detail.png)
+![Event detail](https://raw.githubusercontent.com/t0mer/Holonet/main/assets/screenshots/event-detail.png)
 
 ### Rules — ordered, first-match classification and routing
 Drag to reorder; **Test** dry-runs a sample event so you can see which rule wins
@@ -63,15 +63,15 @@ rule's channels empty to fall back to the per-severity **default routes**. This
 lets you, say, send Critical firewall events to on-call WhatsApp while everything
 else goes to a Telegram ops room.
 
-![Rules](assets/screenshots/rules.png)
-![Test a rule](assets/screenshots/rule-test.png)
+![Rules](https://raw.githubusercontent.com/t0mer/Holonet/main/assets/screenshots/rules.png)
+![Test a rule](https://raw.githubusercontent.com/t0mer/Holonet/main/assets/screenshots/rule-test.png)
 
 Unmapped OIDs can be named on the spot from the Events drawer:
 
-![Map an OID](assets/screenshots/oid-quickmap.png)
+![Map an OID](https://raw.githubusercontent.com/t0mer/Holonet/main/assets/screenshots/oid-quickmap.png)
 
 ### Channels — Shoutrrr / WhatsApp / GreenAPI / webhook, with a real Send test
-![Channels](assets/screenshots/channels.png)
+![Channels](https://raw.githubusercontent.com/t0mer/Holonet/main/assets/screenshots/channels.png)
 
 WhatsApp can be delivered through the [GreenAPI](https://green-api.com) cloud —
 enter the Instance ID, API token, and recipient phone (international format,
@@ -79,21 +79,21 @@ digits only; a JID works too). Leave **API URL** blank for `api.green-api.com`,
 or set your cluster URL (e.g. `https://7103.api.greenapi.com`) if the console
 shows one.
 
-![Add a GreenAPI WhatsApp channel](assets/screenshots/channel-greenapi.png)
+![Add a GreenAPI WhatsApp channel](https://raw.githubusercontent.com/t0mer/Holonet/main/assets/screenshots/channel-greenapi.png)
 
 ### OID Map, Severities, Sinks, Settings
-![OID Map](assets/screenshots/oidmap.png)
-![Severities](assets/screenshots/severities.png)
-![Sinks](assets/screenshots/sinks.png)
-![Settings](assets/screenshots/settings.png)
+![OID Map](https://raw.githubusercontent.com/t0mer/Holonet/main/assets/screenshots/oidmap.png)
+![Severities](https://raw.githubusercontent.com/t0mer/Holonet/main/assets/screenshots/severities.png)
+![Sinks](https://raw.githubusercontent.com/t0mer/Holonet/main/assets/screenshots/sinks.png)
+![Settings](https://raw.githubusercontent.com/t0mer/Holonet/main/assets/screenshots/settings.png)
 
 ### Light theme and mobile
 System-preference-aware, with a toggle in the header. The Events table collapses
 to cards on narrow viewports (sorting stays available).
 
-![Dashboard (light)](assets/screenshots/dashboard-light.png)
+![Dashboard (light)](https://raw.githubusercontent.com/t0mer/Holonet/main/assets/screenshots/dashboard-light.png)
 <p>
-  <img src="assets/screenshots/events-mobile.png" alt="Events on mobile" width="320" />
+  <img src="https://raw.githubusercontent.com/t0mer/Holonet/main/assets/screenshots/events-mobile.png" alt="Events on mobile" width="320" />
 </p>
 
 ---
